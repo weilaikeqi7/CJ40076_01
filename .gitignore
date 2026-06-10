@@ -1,0 +1,16 @@
+# IDE 配置
+.idea/
+
+# CMake 构建目录
+cmake-build-debug-n32/
+cmake-build-*/
+
+# 编译输出（如果后续生成）
+*.o
+*.exe
+*.out
+build/
+
+# 其他可能的临时文件
+*.swp
+.DS_Store
