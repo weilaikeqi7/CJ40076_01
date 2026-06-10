@@ -9,7 +9,7 @@
 
 #include <stdint.h>
 
-#if defined(N32_EXPECT_FPU) && (N32_EXPECT_FPU == 1)
+#if defined(N32_EXPECT_FPU) && (N32_EXPECT_FPU == 1) && !defined(__clang__)
 #if (__FPU_USED != 1)
 #error "FPU was requested, but CMSIS reports __FPU_USED != 1. Check -mfpu and -mfloat-abi."
 #endif

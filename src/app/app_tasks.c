@@ -1046,6 +1046,7 @@ typedef struct
 typedef struct
 {
     uint32_t update_ms;
+    bool update_seen;
     bool has_result;
     bool valid;
     bool first_valid;
@@ -1222,18 +1223,24 @@ static void display_task(void* argument)
         if (snapshot.mode == APP_MODE_MULTI)
         {
             if (range_result_current &&
-                ((!multi_target_cache.has_result) ||
+                ((!multi_target_cache.update_seen) ||
                  (snapshot.range.update_ms != multi_target_cache.update_ms)))
             {
-                multi_target_cache.has_result = true;
+                const bool range_has_target =
+                    snapshot.range.target_valid ||
+                    snapshot.range.first_valid ||
+                    snapshot.range.last_valid;
+
+                multi_target_cache.update_seen = true;
+                multi_target_cache.update_ms = snapshot.range.update_ms;
+                multi_target_cache.has_result = range_has_target;
                 multi_target_cache.valid = false;
                 multi_target_cache.first_valid = false;
                 multi_target_cache.last_valid = false;
                 multi_target_cache.single_valid = false;
 
-                if (snapshot.orientation.valid && snapshot.gnss.fix)
+                if (range_has_target && snapshot.orientation.valid && snapshot.gnss.fix)
                 {
-                    multi_target_cache.update_ms = snapshot.range.update_ms;
                     multi_target_cache.first_valid = snapshot.range.first_valid;
                     multi_target_cache.last_valid = snapshot.range.last_valid;
                     multi_target_cache.single_valid =
@@ -1274,6 +1281,7 @@ static void display_task(void* argument)
         }
         else
         {
+            multi_target_cache.update_seen = false;
             multi_target_cache.has_result = false;
             multi_target_cache.valid = false;
             multi_target_cache.update_ms = 0U;

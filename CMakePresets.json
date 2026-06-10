@@ -1,0 +1,23 @@
+{
+    "version": 6,
+    "configurePresets": [
+        {
+            "name": "Debug-N32",
+            "displayName": "Debug-N32",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/cmake-build-debug-n32",
+            "toolchainFile": "${sourceDir}/cmake/arm-none-eabi-gcc.cmake",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_MAKE_PROGRAM": "D:/Program Files/JetBrains/CLion 2026.1.2/bin/ninja/win/x64/ninja.exe"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "Debug-N32",
+            "displayName": "Debug-N32",
+            "configurePreset": "Debug-N32"
+        }
+    ]
+}
