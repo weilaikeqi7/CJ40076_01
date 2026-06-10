@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define BV220_LINE_MAX 96U
+#define BV220_LINE_MAX 128U
 #define BV220_FIELD_MAX 24U
 
 static char g_line[BV220_LINE_MAX];
@@ -134,7 +134,7 @@ static bool parse_sentence(const char* sentence, GnssData* data)
     (void)strncpy(work, sentence, sizeof(work) - 1U);
     work[sizeof(work) - 1U] = '\0';
 
-    if (strncmp(work, "$GPGGA", 6U) == 0)
+    if (strncmp(work, "$GNGGA", 6U) == 0)
     {
         return parse_gga(work, data);
     }

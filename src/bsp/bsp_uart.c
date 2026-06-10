@@ -9,7 +9,7 @@
 #include "n32l40x_usart.h"
 #include "task.h"
 
-#define BSP_UART_GNSS_RX_BUFFER_SIZE  256U
+#define BSP_UART_GNSS_RX_BUFFER_SIZE  512U
 #define BSP_UART_IMU_RX_BUFFER_SIZE   128U
 #define BSP_UART_RANGE_RX_BUFFER_SIZE 64U
 #define BSP_UART_HOST_RX_BUFFER_SIZE  20U

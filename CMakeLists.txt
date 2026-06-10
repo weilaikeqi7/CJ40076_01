@@ -54,7 +54,16 @@ endforeach()
 
 set(LINKER_SCRIPT_IN "${CMAKE_CURRENT_SOURCE_DIR}/linker/n32l40x_flash.ld.in")
 set(LINKER_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/n32l40x_flash.ld")
+set(BUILD_INFO_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/build_info.h")
 configure_file("${LINKER_SCRIPT_IN}" "${LINKER_SCRIPT}" @ONLY)
+
+add_custom_target(generate_build_info ALL
+    COMMAND ${CMAKE_COMMAND}
+        -DOUTPUT="${BUILD_INFO_HEADER}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/generate_build_info.cmake"
+    BYPRODUCTS "${BUILD_INFO_HEADER}"
+    COMMENT "Generating build info"
+)
 
 file(GLOB STDPERIPH_SOURCES CONFIGURE_DEPENDS
     "${STDPERIPH_DIR}/src/*.c"
@@ -62,6 +71,7 @@ file(GLOB STDPERIPH_SOURCES CONFIGURE_DEPENDS
 
 set(PROJECT_SOURCES
     src/main.c
+    "${BUILD_INFO_HEADER}"
     src/app/app_debug.c
     src/app/app_log.c
     src/app/app_state.c
@@ -101,6 +111,7 @@ set(PROJECT_SOURCES
 )
 
 add_executable(${APP_TARGET} ${PROJECT_SOURCES})
+add_dependencies(${APP_TARGET} generate_build_info)
 
 set_target_properties(${APP_TARGET} PROPERTIES
     OUTPUT_NAME ${APP_OUTPUT_NAME}
@@ -128,6 +139,7 @@ target_compile_definitions(${APP_TARGET} PRIVATE
 )
 
 target_include_directories(${APP_TARGET} PRIVATE
+    "${CMAKE_CURRENT_BINARY_DIR}/generated"
     inc
     inc/app
     inc/bsp

@@ -4,6 +4,7 @@
 #include "app_log.h"
 #include "app_tasks.h"
 #include "board.h"
+#include "build_info.h"
 #include "task.h"
 
 #include <stdint.h>
@@ -36,6 +37,7 @@ int main(void)
     freertos_heap_region_init();
     AppDebug_Init();
     APP_LOGI("main", "boot");
+    APP_LOGI("main", "build: %s", APP_BUILD_TIMESTAMP);
 
     Board_Init();
     tasks_created = AppTasks_Start();

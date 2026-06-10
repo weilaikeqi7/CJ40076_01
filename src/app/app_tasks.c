@@ -1036,6 +1036,51 @@ static int32_t target_altitude_cm(int32_t origin_altitude_cm, uint32_t distance_
     return (int32_t)((double)origin_altitude_cm + height_cm);
 }
 
+typedef struct
+{
+    int32_t latitude_e7;
+    int32_t longitude_e7;
+    int32_t altitude_cm;
+} DisplayTargetCoordinate;
+
+typedef struct
+{
+    uint32_t update_ms;
+    bool has_result;
+    bool valid;
+    bool first_valid;
+    bool last_valid;
+    bool single_valid;
+    DisplayTargetCoordinate first;
+    DisplayTargetCoordinate last;
+    DisplayTargetCoordinate single;
+} DisplayTargetCache;
+
+static DisplayTargetCoordinate calculate_target_coordinate(const GnssData* gnss,
+                                                           const OrientationData* orientation,
+                                                           uint32_t range_mm)
+{
+    DisplayTargetCoordinate target;
+
+    target.latitude_e7 = target_coordinate_e7(gnss->latitude_e7,
+                                              gnss->longitude_e7,
+                                              range_mm,
+                                              orientation->pitch_cd,
+                                              orientation->yaw_cd,
+                                              true);
+    target.longitude_e7 = target_coordinate_e7(gnss->longitude_e7,
+                                               gnss->latitude_e7,
+                                               range_mm,
+                                               orientation->pitch_cd,
+                                               orientation->yaw_cd,
+                                               false);
+    target.altitude_cm = target_altitude_cm(gnss->altitude_cm,
+                                            range_mm,
+                                            orientation->pitch_cd);
+
+    return target;
+}
+
 static void display_coordinate_value(int32_t coordinate_e7,
                                      const uint8_t* degree_digits,
                                      const uint8_t* minute_digits,
@@ -1071,6 +1116,7 @@ static void display_task(void* argument)
 {
     AppStateSnapshot snapshot;
     AppPowerMode last_power_mode = APP_POWER_FAULT;
+    DisplayTargetCache multi_target_cache = { 0 };
     static const uint8_t azimuth_digits[] = { 1U, 2U, 3U };
     static const uint8_t range_digits[] = { 4U, 5U, 6U, 7U };
     static const uint8_t coord_digits[] = { 8U, 9U, 10U, 11U, 12U, 13U, 14U, 15U, 16U };
@@ -1125,10 +1171,7 @@ static void display_task(void* argument)
             ((!g_measure_pending) || (snapshot.range.update_ms >= g_measure_start_ms));
         bool display_range_valid = false;
         bool display_range_is_last = false;
-        bool target_range_valid = false;
-        bool target_range_is_last = false;
         uint32_t display_range_mm = 0U;
-        uint32_t target_range_mm = 0U;
 
         if (range_result_current)
         {
@@ -1139,36 +1182,25 @@ static void display_task(void* argument)
 
                 display_range_is_last =
                     ((snapshot.uptime_ms / target_toggle_ms) & 1U) != 0U;
-                target_range_is_last = display_range_is_last;
                 display_range_valid = true;
-                target_range_valid = true;
                 display_range_mm = display_range_is_last ?
-                    snapshot.range.last_distance_mm : snapshot.range.first_distance_mm;
-                target_range_mm = target_range_is_last ?
                     snapshot.range.last_distance_mm : snapshot.range.first_distance_mm;
             }
             else if (snapshot.range.first_valid)
             {
                 display_range_valid = true;
-                target_range_valid = true;
                 display_range_mm = snapshot.range.first_distance_mm;
-                target_range_mm = snapshot.range.first_distance_mm;
             }
             else if (snapshot.range.last_valid)
             {
                 display_range_valid = true;
-                target_range_valid = true;
                 display_range_is_last = true;
-                target_range_is_last = true;
                 display_range_mm = snapshot.range.last_distance_mm;
-                target_range_mm = snapshot.range.last_distance_mm;
             }
             else if (snapshot.range.target_valid)
             {
                 display_range_valid = true;
-                target_range_valid = true;
                 display_range_mm = snapshot.range.distance_mm;
-                target_range_mm = snapshot.range.distance_mm;
             }
 
             if (display_range_valid)
@@ -1185,6 +1217,66 @@ static void display_task(void* argument)
         else
         {
             display_dash_digits(range_digits, sizeof(range_digits));
+        }
+
+        if (snapshot.mode == APP_MODE_MULTI)
+        {
+            if (range_result_current &&
+                ((!multi_target_cache.has_result) ||
+                 (snapshot.range.update_ms != multi_target_cache.update_ms)))
+            {
+                multi_target_cache.has_result = true;
+                multi_target_cache.valid = false;
+                multi_target_cache.first_valid = false;
+                multi_target_cache.last_valid = false;
+                multi_target_cache.single_valid = false;
+
+                if (snapshot.orientation.valid && snapshot.gnss.fix)
+                {
+                    multi_target_cache.update_ms = snapshot.range.update_ms;
+                    multi_target_cache.first_valid = snapshot.range.first_valid;
+                    multi_target_cache.last_valid = snapshot.range.last_valid;
+                    multi_target_cache.single_valid =
+                        snapshot.range.target_valid &&
+                        (!snapshot.range.first_valid) &&
+                        (!snapshot.range.last_valid);
+
+                    if (multi_target_cache.first_valid)
+                    {
+                        multi_target_cache.first =
+                            calculate_target_coordinate(&snapshot.gnss,
+                                                        &snapshot.orientation,
+                                                        snapshot.range.first_distance_mm);
+                    }
+
+                    if (multi_target_cache.last_valid)
+                    {
+                        multi_target_cache.last =
+                            calculate_target_coordinate(&snapshot.gnss,
+                                                        &snapshot.orientation,
+                                                        snapshot.range.last_distance_mm);
+                    }
+
+                    if (multi_target_cache.single_valid)
+                    {
+                        multi_target_cache.single =
+                            calculate_target_coordinate(&snapshot.gnss,
+                                                        &snapshot.orientation,
+                                                        snapshot.range.distance_mm);
+                    }
+
+                    multi_target_cache.valid =
+                        multi_target_cache.first_valid ||
+                        multi_target_cache.last_valid ||
+                        multi_target_cache.single_valid;
+                }
+            }
+        }
+        else
+        {
+            multi_target_cache.has_result = false;
+            multi_target_cache.valid = false;
+            multi_target_cache.update_ms = 0U;
         }
 
         if (snapshot.mode == APP_MODE_MULTI)
@@ -1219,35 +1311,49 @@ static void display_task(void* argument)
             int32_t display_latitude = snapshot.gnss.latitude_e7;
             int32_t display_longitude = snapshot.gnss.longitude_e7;
             int32_t display_altitude_cm = snapshot.gnss.altitude_cm;
-            const bool target_mode_display = range_result_current;
+            const DisplayTargetCoordinate* display_target = 0;
+            bool coord_range_is_last = false;
+            const bool target_mode_display = multi_target_cache.has_result;
             const bool local_available = snapshot.gnss.fix;
-            const bool target_available = target_mode_display && target_range_valid &&
-                snapshot.orientation.valid && snapshot.gnss.fix;
             const bool show_latitude = ((snapshot.uptime_ms / 1000U) & 1U) != 0U;
+
+            if (multi_target_cache.valid)
+            {
+                if (multi_target_cache.first_valid && multi_target_cache.last_valid)
+                {
+                    coord_range_is_last =
+                        ((snapshot.uptime_ms / 2000U) & 1U) != 0U;
+                    display_target = coord_range_is_last ?
+                        &multi_target_cache.last : &multi_target_cache.first;
+                }
+                else if (multi_target_cache.first_valid)
+                {
+                    display_target = &multi_target_cache.first;
+                }
+                else if (multi_target_cache.last_valid)
+                {
+                    coord_range_is_last = true;
+                    display_target = &multi_target_cache.last;
+                }
+                else if (multi_target_cache.single_valid)
+                {
+                    display_target = &multi_target_cache.single;
+                }
+            }
+
+            const bool target_available = display_target != 0;
 
             if (target_available)
             {
-                display_latitude = target_coordinate_e7(snapshot.gnss.latitude_e7,
-                                                        snapshot.gnss.longitude_e7,
-                                                        target_range_mm,
-                                                        snapshot.orientation.pitch_cd,
-                                                        snapshot.orientation.yaw_cd,
-                                                        true);
-                display_longitude = target_coordinate_e7(snapshot.gnss.longitude_e7,
-                                                         snapshot.gnss.latitude_e7,
-                                                         target_range_mm,
-                                                         snapshot.orientation.pitch_cd,
-                                                         snapshot.orientation.yaw_cd,
-                                                         false);
-                display_altitude_cm = target_altitude_cm(snapshot.gnss.altitude_cm,
-                                                         target_range_mm,
-                                                         snapshot.orientation.pitch_cd);
+                display_latitude = display_target->latitude_e7;
+                display_longitude = display_target->longitude_e7;
+                display_altitude_cm = display_target->altitude_cm;
             }
 
             LcdSegments_SetSymbol((uint8_t)LCD_SYMBOL_COORD_LOCAL, !target_mode_display);
             LcdSegments_SetSymbol((uint8_t)LCD_SYMBOL_COORD_TARGET, target_mode_display);
-            LcdSegments_SetSymbol((uint8_t)LCD_SYMBOL_COORD_FIRST_F, target_available && !target_range_is_last);
-            LcdSegments_SetSymbol((uint8_t)LCD_SYMBOL_COORD_LAST_E, target_available && target_range_is_last);
+            LcdSegments_SetSymbol((uint8_t)LCD_SYMBOL_COORD_FIRST_F, target_available && !coord_range_is_last);
+            LcdSegments_SetSymbol((uint8_t)LCD_SYMBOL_COORD_LAST_E, target_available && coord_range_is_last);
             LcdSegments_SetSymbol((uint8_t)LCD_SYMBOL_COORD_DEG, true);
             LcdSegments_SetSymbol((uint8_t)LCD_SYMBOL_COORD_MIN, true);
             LcdSegments_SetSymbol((uint8_t)LCD_SYMBOL_COORD_SEC, true);
@@ -1284,14 +1390,14 @@ static void display_task(void* argument)
                 if (target_available)
                 {
                     const uint8_t coord_log_state =
-                        (uint8_t)((target_range_is_last ? 0x02U : 0x00U) |
+                        (uint8_t)((coord_range_is_last ? 0x02U : 0x00U) |
                                   (show_latitude ? 0x01U : 0x00U));
 
                     if (coord_log_state != g_last_logged_target_coord)
                     {
                         g_last_logged_target_coord = coord_log_state;
                         APP_LOGI("coord", "target %s %s=%d alt=%dcm",
-                                 target_range_is_last ? "last" : "first",
+                                 coord_range_is_last ? "last" : "first",
                                  show_latitude ? "lat" : "lon",
                                  (int)(show_latitude ? display_latitude : display_longitude),
                                  (int)display_altitude_cm);
