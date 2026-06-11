@@ -1,6 +1,7 @@
 #include "app_tasks.h"
 
 #include "app_log.h"
+#include "app_runtime_stats.h"
 #include "app_state.h"
 #include "battery.h"
 #include "board.h"
@@ -1433,6 +1434,11 @@ static BaseType_t create_runtime_tasks(void)
     }
 
     if (xTaskCreate(display_task, "display", APP_DISPLAY_TASK_STACK_WORDS, 0, tskIDLE_PRIORITY + 1U, 0) != pdPASS)
+    {
+        return pdFAIL;
+    }
+
+    if (AppRunTimeStats_Start() != pdPASS)
     {
         return pdFAIL;
     }

@@ -74,6 +74,7 @@ set(PROJECT_SOURCES
     "${BUILD_INFO_HEADER}"
     src/app/app_debug.c
     src/app/app_log.c
+    src/app/app_runtime_stats.c
     src/app/app_state.c
     src/app/app_tasks.c
     src/app/measure_counter.c

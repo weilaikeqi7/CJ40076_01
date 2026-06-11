@@ -45,10 +45,17 @@ void AppAssertFailed(const char* file, int line);
 #define configTIMER_QUEUE_LENGTH                8
 #define configTIMER_TASK_STACK_DEPTH            (configMINIMAL_STACK_SIZE * 2)
 
-#define configGENERATE_RUN_TIME_STATS           0
+#define configGENERATE_RUN_TIME_STATS           1
 #define configUSE_TRACE_FACILITY                1
 #define configUSE_STATS_FORMATTING_FUNCTIONS    0
 #define configRECORD_STACK_HIGH_ADDRESS         1
+#define configRUN_TIME_COUNTER_TYPE             uint32_t
+
+void AppRunTimeStats_TimerInit(void);
+uint32_t AppRunTimeStats_GetCounter(void);
+
+#define portCONFIGURE_TIMER_FOR_RUN_TIME_STATS() AppRunTimeStats_TimerInit()
+#define portGET_RUN_TIME_COUNTER_VALUE()         AppRunTimeStats_GetCounter()
 
 #define configPRIO_BITS                         __NVIC_PRIO_BITS
 #define configLIBRARY_LOWEST_INTERRUPT_PRIORITY 15
