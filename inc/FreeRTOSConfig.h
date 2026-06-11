@@ -27,7 +27,7 @@ void AppAssertFailed(const char* file, int line);
 #define configENABLE_BACKWARD_COMPATIBILITY     1
 #define configNUM_THREAD_LOCAL_STORAGE_POINTERS 0
 
-#define configTOTAL_HEAP_SIZE                   ((size_t)(8U * 1024U))
+#define configTOTAL_HEAP_SIZE                   ((size_t)(12U * 1024U))
 #define configSUPPORT_DYNAMIC_ALLOCATION        1
 #define configSUPPORT_STATIC_ALLOCATION         0
 #define configAPPLICATION_ALLOCATED_HEAP        1

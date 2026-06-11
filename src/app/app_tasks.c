@@ -21,10 +21,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define APP_STARTUP_TASK_STACK_WORDS  (configMINIMAL_STACK_SIZE * 2U)
+#define APP_STARTUP_TASK_STACK_WORDS  (configMINIMAL_STACK_SIZE * 3U)
 #define APP_IO_TASK_STACK_WORDS       (configMINIMAL_STACK_SIZE * 2U)
-#define APP_CONTROL_TASK_STACK_WORDS  (configMINIMAL_STACK_SIZE * 2U)
-#define APP_DISPLAY_TASK_STACK_WORDS  (configMINIMAL_STACK_SIZE)
+#define APP_CONTROL_TASK_STACK_WORDS  (configMINIMAL_STACK_SIZE * 3U)
+#define APP_DISPLAY_TASK_STACK_WORDS  (configMINIMAL_STACK_SIZE * 2U)
 #define APP_EARTH_RADIUS_M           6371000.0
 
 static bool g_range_powered;
