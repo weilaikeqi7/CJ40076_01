@@ -17,15 +17,17 @@
 #define JY901B_REG_ORIENT   0x23U
 #define JY901B_REG_KEY      0x69U
 
-#define JY901B_KEY_UNLOCK   0xB588U
-#define JY901B_SAVE_PARAM   0x0000U
-#define JY901B_CAL_NORMAL   0x0000U
-#define JY901B_CAL_GYRO_ACC 0x0001U
-#define JY901B_CAL_MAG_MM   0x0007U
-#define JY901B_CAL_REF_ANGLE 0x0008U
-#define JY901B_RSW_ANGLE    0x0008U
-#define JY901B_RRATE_1HZ    0x0003U
+#define JY901B_KEY_UNLOCK       0xB588U
+#define JY901B_SAVE_PARAM       0x0000U
+#define JY901B_CAL_NORMAL       0x0000U
+#define JY901B_CAL_GYRO_ACC     0x0001U
+#define JY901B_CAL_MAG_MM       0x0007U
+#define JY901B_CAL_REF_ANGLE    0x0008U
+#define JY901B_RSW_ANGLE        0x0008U
+#define JY901B_RRATE_5HZ        0x0005U
 #define JY901B_ORIENT_VERTICAL 0x0001U
+#define JY901B_WRITE_SETTLE_MS  200U
+#define JY901B_YAW_OFFSET_CD    9000L
 
 static uint8_t g_frame[JY901B_FRAME_LENGTH];
 static uint8_t g_index;
@@ -42,15 +44,15 @@ static int16_t angle_to_centidegree(int16_t raw)
 
 static int16_t compensate_yaw_centidegree(int16_t yaw_cd)
 {
-    int32_t compensated = 27000L - (int32_t)yaw_cd;
+    int32_t compensated = (int32_t)yaw_cd + JY901B_YAW_OFFSET_CD;
 
-    while (compensated < 0L)
-    {
-        compensated += 36000L;
-    }
-    while (compensated >= 36000L)
+    while (compensated > 18000L)
     {
         compensated -= 36000L;
+    }
+    while (compensated <= -18000L)
+    {
+        compensated += 36000L;
     }
 
     return (int16_t)compensated;
@@ -69,11 +71,16 @@ static void write_register(uint8_t reg, uint16_t value)
     (void)BspUart_Write(BSP_UART_IMU, packet, sizeof(packet), 100U);
 }
 
-static void write_unlocked_register(uint8_t reg, uint16_t value)
+static void unlock_registers(void)
 {
     write_register(JY901B_REG_KEY, JY901B_KEY_UNLOCK);
     vTaskDelay(pdMS_TO_TICKS(200U));
-    write_register(reg, value);
+}
+
+static void save_registers(void)
+{
+    write_register(JY901B_REG_SAVE, JY901B_SAVE_PARAM);
+    vTaskDelay(pdMS_TO_TICKS(300U));
 }
 
 void Jy901b_Reset(void)
@@ -83,50 +90,67 @@ void Jy901b_Reset(void)
 
 void Jy901b_Configure(void)
 {
-    write_unlocked_register(JY901B_REG_RRATE, JY901B_RRATE_1HZ);
-    write_unlocked_register(JY901B_REG_RSW, JY901B_RSW_ANGLE);
-    write_unlocked_register(JY901B_REG_ORIENT, JY901B_ORIENT_VERTICAL);
-    write_unlocked_register(JY901B_REG_SAVE, JY901B_SAVE_PARAM);
-    vTaskDelay(pdMS_TO_TICKS(300U));
+    unlock_registers();
+    write_register(JY901B_REG_RRATE, JY901B_RRATE_5HZ);
+    write_register(JY901B_REG_RSW, JY901B_RSW_ANGLE);
+    write_register(JY901B_REG_ORIENT, JY901B_ORIENT_VERTICAL);
+    vTaskDelay(pdMS_TO_TICKS(JY901B_WRITE_SETTLE_MS));
+    save_registers();
 }
 
 void Jy901b_CalibrateAccGyro(void)
 {
-    write_unlocked_register(JY901B_REG_CALSW, JY901B_CAL_GYRO_ACC);
-    vTaskDelay(pdMS_TO_TICKS(10000U));
-    write_unlocked_register(JY901B_REG_CALSW, JY901B_CAL_NORMAL);
+    unlock_registers();
+    write_register(JY901B_REG_CALSW, JY901B_CAL_GYRO_ACC);
+    vTaskDelay(pdMS_TO_TICKS(4000U));
+    write_register(JY901B_REG_CALSW, JY901B_CAL_NORMAL);
     vTaskDelay(pdMS_TO_TICKS(100U));
-    write_unlocked_register(JY901B_REG_SAVE, JY901B_SAVE_PARAM);
-    vTaskDelay(pdMS_TO_TICKS(300U));
+    save_registers();
 }
 
 void Jy901b_CalibrateRefAngle(void)
 {
-    write_unlocked_register(JY901B_REG_CALSW, JY901B_CAL_REF_ANGLE);
+    unlock_registers();
+    write_register(JY901B_REG_CALSW, JY901B_CAL_REF_ANGLE);
     vTaskDelay(pdMS_TO_TICKS(3000U));
-    write_unlocked_register(JY901B_REG_SAVE, JY901B_SAVE_PARAM);
-    vTaskDelay(pdMS_TO_TICKS(300U));
+    save_registers();
 }
 
 void Jy901b_StartMagCalibration(void)
 {
-    write_unlocked_register(JY901B_REG_CALSW, JY901B_CAL_MAG_MM);
+    unlock_registers();
+    write_register(JY901B_REG_CALSW, JY901B_CAL_MAG_MM);
 }
 
 void Jy901b_StopMagCalibration(void)
 {
-    write_unlocked_register(JY901B_REG_CALSW, JY901B_CAL_NORMAL);
-    vTaskDelay(pdMS_TO_TICKS(100U));
-    write_unlocked_register(JY901B_REG_SAVE, JY901B_SAVE_PARAM);
-    vTaskDelay(pdMS_TO_TICKS(300U));
+    unlock_registers();
+    write_register(JY901B_REG_CALSW, JY901B_CAL_NORMAL);
+    save_registers();
 }
 
 bool Jy901b_ProcessByte(uint8_t byte, OrientationData* data)
 {
     uint8_t checksum = 0U;
 
-    if ((g_index == 0U) && (byte != JY901B_HEADER))
+    if (g_index == 0U)
     {
+        if (byte != JY901B_HEADER)
+        {
+            return false;
+        }
+
+        g_frame[g_index++] = byte;
+        return false;
+    }
+
+    if ((g_index == 1U) && (byte != JY901B_FRAME_ANGLE))
+    {
+        g_index = (byte == JY901B_HEADER) ? 1U : 0U;
+        if (g_index == 1U)
+        {
+            g_frame[0] = byte;
+        }
         return false;
     }
 
@@ -144,6 +168,11 @@ bool Jy901b_ProcessByte(uint8_t byte, OrientationData* data)
 
     if ((checksum != g_frame[JY901B_FRAME_LENGTH - 1U]) || (g_frame[1] != JY901B_FRAME_ANGLE) || (data == 0))
     {
+        if (g_frame[JY901B_FRAME_LENGTH - 1U] == JY901B_HEADER)
+        {
+            g_frame[0] = JY901B_HEADER;
+            g_index = 1U;
+        }
         return false;
     }
 

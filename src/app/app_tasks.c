@@ -392,7 +392,7 @@ static void update_imu_from_uart(uint32_t now_ms)
         {
             data.update_ms = now_ms;
             AppState_UpdateOrientation(&data);
-            if ((now_ms - last_log_ms) >= 1000U)
+            if ((now_ms - last_log_ms) >= 200U)
             {
                 last_log_ms = now_ms;
                 APP_LOGI("att", "yaw=%d.%02d pitch=%d.%02d roll=%d.%02d",
@@ -1299,8 +1299,7 @@ static void display_task(void* argument)
             LcdSegments_SetSymbol((uint8_t)LCD_SYMBOL_PITCH_DEG, true);
             LcdSegments_SetSymbol((uint8_t)LCD_SYMBOL_PITCH_SIGN_MINUS,
                                   snapshot.orientation.valid && (pitch_deg < 0));
-            LcdSegments_SetSymbol((uint8_t)LCD_SYMBOL_PITCH_SIGN_PLUS,
-                                  snapshot.orientation.valid && (pitch_deg >= 0));
+            LcdSegments_SetSymbol((uint8_t)LCD_SYMBOL_PITCH_SIGN_PLUS, false);
 
             if (pitch_deg < 0)
             {
