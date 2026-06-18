@@ -90,7 +90,6 @@ static const LcdSymbolPoint g_symbol_points[] = {
     { LCD_SYMBOL_BATTERY_2,         LCD_POINT(58U, 2U) },
     { LCD_SYMBOL_BATTERY_3,         LCD_POINT(60U, 2U) },
     { LCD_SYMBOL_BATTERY_4,         LCD_POINT(60U, 3U) },
-    { LCD_SYMBOL_BATTERY_5,         LCD_POINT(60U, 3U) },
     { LCD_SYMBOL_BATTERY_FRAME,     LCD_POINT(60U, 1U) },
     { LCD_SYMBOL_UNIT_M,            LCD_POINT(60U, 0U) },
     { LCD_SYMBOL_RANGE_SINGLE,      LCD_POINT(42U, 1U) },
