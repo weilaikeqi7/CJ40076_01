@@ -1,6 +1,5 @@
 #include "board.h"
 
-#include "app_log.h"
 #include "board_config.h"
 #include "bsp_adc.h"
 #include "bsp_gpio.h"
@@ -79,5 +78,4 @@ void Board_Init(void)
 
     BspAdc_Init();
 
-    APP_LOGI("board", "pins and peripherals initialized");
 }
