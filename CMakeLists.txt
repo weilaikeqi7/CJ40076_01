@@ -20,7 +20,7 @@ set(SDK_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/vendor/Nations.N32L40x_Library.2.2.0"
     CACHE PATH "Nations N32L40x SDK root")
 set(N32_TARGET n32l40x CACHE STRING "Nations target platform name")
 set(N32_FLASH_ORIGIN "0x08000000" CACHE STRING "Flash origin")
-set(N32_FLASH_SIZE "128K" CACHE STRING "Flash size for N32L403KBQ7")
+set(N32_FLASH_SIZE "126K" CACHE STRING "Application Flash size; final 2 KB is settings storage" FORCE)
 set(N32_RAM_ORIGIN "0x20000000" CACHE STRING "RAM origin" FORCE)
 set(N32_RAM_SIZE "24K" CACHE STRING "RAM size for N32L403KBQ7" FORCE)
 set(N32_STACK_SIZE "0x800" CACHE STRING "Stack size" FORCE)
@@ -135,7 +135,6 @@ target_compile_definitions(${APP_TARGET} PRIVATE
     CMB_USER_CFG
     APP_USE_CMB_FAULT_HANDLER=1
     $<$<CONFIG:Debug>:APP_DEBUG_BUILD=1>
-    $<$<CONFIG:Debug>:APP_DEBUG_DISABLE_IDLE_SLEEP=1>
     $<$<BOOL:${N32_USE_FPU}>:N32_EXPECT_FPU=1>
 )
 

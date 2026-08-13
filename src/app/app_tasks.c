@@ -25,6 +25,19 @@
 #define APP_CONTROL_TASK_STACK_WORDS  (configMINIMAL_STACK_SIZE * 3U)
 #define APP_DISPLAY_TASK_STACK_WORDS  (configMINIMAL_STACK_SIZE * 2U)
 #define APP_EARTH_RADIUS_M           6371000.0
+#define APP_CALIBRATION_HOLD_START_MS 600U
+#define APP_CALIBRATION_REPEAT_MS     100U
+#define APP_CALIBRATION_NEXT_PAGE_MS 1000U
+#define APP_CALIBRATION_TIMEOUT_MS    30000U
+
+typedef enum
+{
+    CALIBRATION_PAGE_NONE = 0,
+    CALIBRATION_PAGE_PITCH_INSTALL,
+    CALIBRATION_PAGE_YAW_INSTALL,
+    CALIBRATION_PAGE_YAW_ERROR,
+    CALIBRATION_PAGE_SAVE
+} CalibrationPage;
 
 static bool g_range_powered;
 static bool g_imu_powered;
@@ -37,6 +50,19 @@ static uint32_t g_work_time_test_next_ms;
 static bool g_imu_calibration_powered;
 static bool g_imu_mag_calibration_active;
 static volatile bool g_lcd_calibration_prompt;
+static volatile CalibrationPage g_calibration_page;
+static CalibrationOffsets g_calibration_offsets;
+static CalibrationOffsets g_calibration_edit_offsets;
+static uint32_t g_calibration_last_activity_ms;
+static uint32_t g_calibration_power_hold_ms;
+static uint32_t g_calibration_mode_hold_ms;
+static uint32_t g_calibration_power_repeat_ms;
+static uint32_t g_calibration_mode_repeat_ms;
+static uint32_t g_calibration_both_hold_ms;
+static bool g_calibration_power_repeated;
+static bool g_calibration_mode_repeated;
+static bool g_calibration_both_active;
+static bool g_calibration_wait_release;
 static bool g_measure_pending;
 static AppWorkMode g_measure_mode = APP_MODE_SINGLE;
 static uint32_t g_measure_start_ms;
@@ -57,9 +83,71 @@ static uint32_t g_range_frames_since_start;
 static bool g_range_command_ack_received;
 static volatile uint8_t g_range_last_ack_command;
 
+static void display_battery_symbols(uint8_t level);
+static int32_t normalize_degrees(int32_t degrees);
+
 static uint32_t tick_ms(void)
 {
     return (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+}
+
+static int32_t normalize_yaw_centidegree(int32_t yaw_cd)
+{
+    while (yaw_cd > 18000)
+    {
+        yaw_cd -= 36000;
+    }
+    while (yaw_cd <= -18000)
+    {
+        yaw_cd += 36000;
+    }
+    return yaw_cd;
+}
+
+static bool calibration_settings_active(void)
+{
+    return g_calibration_page != CALIBRATION_PAGE_NONE;
+}
+
+static void get_active_calibration_offsets(CalibrationOffsets* offsets)
+{
+    if (offsets == 0)
+    {
+        return;
+    }
+
+    taskENTER_CRITICAL();
+    *offsets = calibration_settings_active() ? g_calibration_edit_offsets : g_calibration_offsets;
+    taskEXIT_CRITICAL();
+}
+
+static void apply_orientation_offsets(OrientationData* data)
+{
+    CalibrationOffsets offsets;
+    int32_t pitch_cd;
+    int32_t yaw_cd;
+
+    if (data == 0)
+    {
+        return;
+    }
+
+    get_active_calibration_offsets(&offsets);
+    pitch_cd = -(int32_t)data->pitch_cd + ((int32_t)offsets.pitch_install_tenth_deg * 10);
+    yaw_cd = -(int32_t)data->yaw_cd +
+             ((int32_t)(offsets.yaw_install_tenth_deg + offsets.yaw_error_tenth_deg) * 10);
+
+    if (pitch_cd > INT16_MAX)
+    {
+        pitch_cd = INT16_MAX;
+    }
+    else if (pitch_cd < INT16_MIN)
+    {
+        pitch_cd = INT16_MIN;
+    }
+
+    data->pitch_cd = (int16_t)pitch_cd;
+    data->yaw_cd = (int16_t)normalize_yaw_centidegree(yaw_cd);
 }
 
 static bool mode_uses_multifunction(AppWorkMode mode)
@@ -341,6 +429,7 @@ static void update_imu_from_uart(uint32_t now_ms)
             {
                 continue;
             }
+            apply_orientation_offsets(&data);
             data.update_ms = now_ms;
             AppState_UpdateOrientation(&data);
         }
@@ -407,6 +496,253 @@ static void clear_measure_count(void)
     AppState_SetMeasureCount(MeasureCounter_Get());
 }
 
+static void reset_calibration_key_state(void)
+{
+    g_calibration_power_hold_ms = 0U;
+    g_calibration_mode_hold_ms = 0U;
+    g_calibration_power_repeat_ms = 0U;
+    g_calibration_mode_repeat_ms = 0U;
+    g_calibration_both_hold_ms = 0U;
+    g_calibration_power_repeated = false;
+    g_calibration_mode_repeated = false;
+    g_calibration_both_active = false;
+    g_calibration_wait_release = false;
+}
+
+static void enter_calibration_settings(void)
+{
+#if APP_WORK_TIME_TEST_MODE_ENABLE
+    g_work_time_test_active = false;
+#endif
+    AppState_ClearRange();
+    range_power_set(false);
+    gnss_power_set(false);
+    imu_power_set(true);
+
+    taskENTER_CRITICAL();
+    g_calibration_edit_offsets = g_calibration_offsets;
+    g_calibration_page = CALIBRATION_PAGE_PITCH_INSTALL;
+    taskEXIT_CRITICAL();
+
+    g_calibration_last_activity_ms = tick_ms();
+    reset_calibration_key_state();
+}
+
+static void leave_calibration_settings(void)
+{
+    taskENTER_CRITICAL();
+    g_calibration_page = CALIBRATION_PAGE_NONE;
+    taskEXIT_CRITICAL();
+    reset_calibration_key_state();
+    AppState_ClearOrientation();
+    apply_mode_power(AppState_GetMode());
+}
+
+static void save_calibration_settings(void)
+{
+    CalibrationOffsets offsets;
+
+    taskENTER_CRITICAL();
+    offsets = g_calibration_edit_offsets;
+    taskEXIT_CRITICAL();
+
+    if (!MeasureCounter_SaveCalibration(&offsets))
+    {
+        APP_LOGE("cal", "failed to save angle offsets");
+        return;
+    }
+
+    taskENTER_CRITICAL();
+    g_calibration_offsets = offsets;
+    taskEXIT_CRITICAL();
+    leave_calibration_settings();
+}
+
+static void next_calibration_page(uint32_t now_ms)
+{
+    taskENTER_CRITICAL();
+    if ((g_calibration_page >= CALIBRATION_PAGE_PITCH_INSTALL) &&
+        (g_calibration_page < CALIBRATION_PAGE_SAVE))
+    {
+        g_calibration_page = (CalibrationPage)((uint32_t)g_calibration_page + 1U);
+    }
+    else
+    {
+        g_calibration_page = CALIBRATION_PAGE_PITCH_INSTALL;
+    }
+    taskEXIT_CRITICAL();
+    g_calibration_last_activity_ms = now_ms;
+}
+
+static void adjust_calibration_value(int16_t delta, uint32_t now_ms)
+{
+    int16_t* value = 0;
+    int16_t minimum = 0;
+    int16_t maximum = 0;
+    int32_t adjusted;
+
+    taskENTER_CRITICAL();
+    switch (g_calibration_page)
+    {
+    case CALIBRATION_PAGE_PITCH_INSTALL:
+        value = &g_calibration_edit_offsets.pitch_install_tenth_deg;
+        minimum = -900;
+        maximum = 900;
+        break;
+    case CALIBRATION_PAGE_YAW_INSTALL:
+        value = &g_calibration_edit_offsets.yaw_install_tenth_deg;
+        minimum = -1800;
+        maximum = 1800;
+        break;
+    case CALIBRATION_PAGE_YAW_ERROR:
+        value = &g_calibration_edit_offsets.yaw_error_tenth_deg;
+        minimum = -1800;
+        maximum = 1800;
+        break;
+    default:
+        break;
+    }
+
+    if (value != 0)
+    {
+        adjusted = (int32_t)*value + delta;
+        if (adjusted < minimum)
+        {
+            adjusted = minimum;
+        }
+        else if (adjusted > maximum)
+        {
+            adjusted = maximum;
+        }
+        *value = (int16_t)adjusted;
+    }
+    taskEXIT_CRITICAL();
+
+    if (value != 0)
+    {
+        g_calibration_last_activity_ms = now_ms;
+    }
+}
+
+static void handle_calibration_settings_input(KeyEvent event, uint32_t now_ms)
+{
+    const bool power_pressed = Keys_IsPowerPressed();
+    const bool mode_pressed = Keys_IsModePressed();
+    const CalibrationPage page = g_calibration_page;
+
+    if (g_calibration_wait_release)
+    {
+        if ((!power_pressed) && (!mode_pressed))
+        {
+            reset_calibration_key_state();
+        }
+        return;
+    }
+
+    if (g_calibration_both_active)
+    {
+        if (power_pressed && mode_pressed)
+        {
+            if ((now_ms - g_calibration_both_hold_ms) >= APP_CALIBRATION_NEXT_PAGE_MS)
+            {
+                next_calibration_page(now_ms);
+                g_calibration_both_active = false;
+                g_calibration_wait_release = true;
+            }
+        }
+        else
+        {
+            g_calibration_both_active = false;
+            g_calibration_wait_release = true;
+        }
+        return;
+    }
+
+    if (power_pressed && mode_pressed)
+    {
+        g_calibration_both_active = true;
+        g_calibration_both_hold_ms = now_ms;
+        g_calibration_power_repeated = true;
+        g_calibration_mode_repeated = true;
+        return;
+    }
+
+    if (page == CALIBRATION_PAGE_SAVE)
+    {
+        if (event == KEY_EVENT_POWER_SHORT)
+        {
+            save_calibration_settings();
+        }
+        else if (event == KEY_EVENT_MODE_SHORT)
+        {
+            leave_calibration_settings();
+        }
+        else if ((now_ms - g_calibration_last_activity_ms) >= APP_CALIBRATION_TIMEOUT_MS)
+        {
+            leave_calibration_settings();
+        }
+        return;
+    }
+
+    if ((event == KEY_EVENT_POWER_SHORT) && (!g_calibration_power_repeated))
+    {
+        adjust_calibration_value(1, now_ms);
+    }
+    else if ((event == KEY_EVENT_MODE_SHORT) && (!g_calibration_mode_repeated))
+    {
+        adjust_calibration_value(-1, now_ms);
+    }
+
+    if (power_pressed)
+    {
+        if (g_calibration_power_hold_ms == 0U)
+        {
+            g_calibration_power_hold_ms = now_ms;
+            g_calibration_power_repeat_ms = now_ms;
+        }
+        else if (((now_ms - g_calibration_power_hold_ms) >= APP_CALIBRATION_HOLD_START_MS) &&
+                 ((now_ms - g_calibration_power_repeat_ms) >= APP_CALIBRATION_REPEAT_MS))
+        {
+            adjust_calibration_value(1, now_ms);
+            g_calibration_power_repeat_ms = now_ms;
+            g_calibration_power_repeated = true;
+        }
+    }
+    else
+    {
+        g_calibration_power_hold_ms = 0U;
+        g_calibration_power_repeat_ms = 0U;
+        g_calibration_power_repeated = false;
+    }
+
+    if (mode_pressed)
+    {
+        if (g_calibration_mode_hold_ms == 0U)
+        {
+            g_calibration_mode_hold_ms = now_ms;
+            g_calibration_mode_repeat_ms = now_ms;
+        }
+        else if (((now_ms - g_calibration_mode_hold_ms) >= APP_CALIBRATION_HOLD_START_MS) &&
+                 ((now_ms - g_calibration_mode_repeat_ms) >= APP_CALIBRATION_REPEAT_MS))
+        {
+            adjust_calibration_value(-1, now_ms);
+            g_calibration_mode_repeat_ms = now_ms;
+            g_calibration_mode_repeated = true;
+        }
+    }
+    else
+    {
+        g_calibration_mode_hold_ms = 0U;
+        g_calibration_mode_repeat_ms = 0U;
+        g_calibration_mode_repeated = false;
+    }
+
+    if ((now_ms - g_calibration_last_activity_ms) >= APP_CALIBRATION_TIMEOUT_MS)
+    {
+        leave_calibration_settings();
+    }
+}
+
 static void enter_imu_calibration_power(void)
 {
     AppState_ClearRange();
@@ -459,6 +795,7 @@ static void start_imu_mag_calibration(void)
     if (Jy901b_StartMagCalibration())
     {
         g_imu_mag_calibration_active = true;
+        APP_LOGI("cal", "mag calibration started");
     }
     else
     {
@@ -485,6 +822,10 @@ static void stop_imu_mag_calibration(void)
     {
         APP_LOGE("cal", "mag stop command failed");
     }
+    else
+    {
+        APP_LOGI("cal", "mag calibration stopped, save command sent");
+    }
 }
 
 static void handle_mode_click_count(uint8_t count)
@@ -505,6 +846,9 @@ static void handle_mode_click_count(uint8_t count)
         break;
     case 3U:
         clear_measure_count();
+        break;
+    case 4U:
+        enter_calibration_settings();
         break;
     case 5U:
         calibrate_imu_accelerometer();
@@ -809,7 +1153,15 @@ static void control_task(void* argument)
         }
 #endif
 
-        if (event == KEY_EVENT_MODE_SHORT)
+        if (calibration_settings_active())
+        {
+            handle_calibration_settings_input(event, now_ms);
+        }
+        else if (event == KEY_EVENT_POWER_LONG)
+        {
+            power_off_wait_forever(true);
+        }
+        else if (event == KEY_EVENT_MODE_SHORT)
         {
             note_mode_short_click(now_ms);
         }
@@ -817,16 +1169,17 @@ static void control_task(void* argument)
         {
             handle_power_short();
         }
-        else if (event == KEY_EVENT_POWER_LONG)
-        {
-            power_off_wait_forever(true);
-        }
-
         close_measurement_if_done(tick_ms());
 #if APP_WORK_TIME_TEST_MODE_ENABLE
-        update_work_time_test(tick_ms());
+        if (!calibration_settings_active())
+        {
+            update_work_time_test(tick_ms());
+        }
 #endif
-        close_mode_click_window(tick_ms());
+        if (!calibration_settings_active())
+        {
+            close_mode_click_window(tick_ms());
+        }
 
         if ((now_ms - last_battery_ms) >= 1000U)
         {
@@ -873,6 +1226,139 @@ static void display_number_fixed(const uint8_t* digit_ids, uint8_t digit_count, 
     }
 }
 
+static void display_calibration_label(const uint8_t* digit_ids, CalibrationPage page)
+{
+    const char* label = "   ";
+
+    switch (page)
+    {
+    case CALIBRATION_PAGE_PITCH_INSTALL:
+        label = "PIt";
+        break;
+    case CALIBRATION_PAGE_YAW_INSTALL:
+        label = "HIt";
+        break;
+    case CALIBRATION_PAGE_YAW_ERROR:
+        label = "HEr";
+        break;
+    default:
+        break;
+    }
+
+    for (uint8_t i = 0U; i < 3U; ++i)
+    {
+        LcdSegments_SetChar(digit_ids[i], label[i]);
+    }
+}
+
+static void display_calibration_save(const uint8_t* digit_ids)
+{
+    static const char label[] = "SAVE";
+
+    for (uint8_t i = 0U; i < 4U; ++i)
+    {
+        LcdSegments_SetChar(digit_ids[i], label[i]);
+    }
+}
+
+static void display_calibration_live_angle(const uint8_t* digit_ids,
+                                           CalibrationPage page,
+                                           const OrientationData* orientation)
+{
+    int32_t tenths;
+
+    if ((orientation == 0) || (!orientation->valid))
+    {
+        display_dash_digits(digit_ids, 4U);
+        return;
+    }
+
+    if (page == CALIBRATION_PAGE_PITCH_INSTALL)
+    {
+        tenths = orientation->pitch_cd / 10;
+        if (tenths < -999)
+        {
+            tenths = -999;
+        }
+        else if (tenths > 9999)
+        {
+            tenths = 9999;
+        }
+
+        if (tenths < 0)
+        {
+            LcdSegments_SetDash(digit_ids[0], true);
+            display_number_fixed(&digit_ids[1], 3U, (uint32_t)(-tenths));
+        }
+        else
+        {
+            LcdSegments_SetNumberRightAligned(digit_ids, 4U, (uint32_t)tenths);
+        }
+    }
+    else
+    {
+        tenths = normalize_yaw_centidegree(orientation->yaw_cd);
+        if (tenths < 0)
+        {
+            tenths += 36000;
+        }
+        tenths /= 10;
+        LcdSegments_SetNumberRightAligned(digit_ids, 4U, (uint32_t)tenths);
+    }
+}
+
+static void display_calibration_settings(const uint8_t* label_digits,
+                                         const uint8_t* live_angle_digits,
+                                         const uint8_t* value_digits,
+                                         const AppStateSnapshot* snapshot)
+{
+    CalibrationPage page;
+    CalibrationOffsets offsets;
+    int16_t value = 0;
+    uint32_t absolute;
+
+    taskENTER_CRITICAL();
+    page = g_calibration_page;
+    offsets = g_calibration_edit_offsets;
+    taskEXIT_CRITICAL();
+
+    LcdSegments_ClearBuffer();
+    display_battery_symbols(snapshot->battery.level);
+    display_calibration_label(label_digits, page);
+
+    if (page == CALIBRATION_PAGE_SAVE)
+    {
+        display_calibration_save(live_angle_digits);
+        LcdSegments_SetSymbol((uint8_t)LCD_SYMBOL_RANGE_FIRST_F, true);
+        LcdSegments_SetSymbol((uint8_t)LCD_SYMBOL_RANGE_LAST_E, true);
+        return;
+    }
+
+    display_calibration_live_angle(live_angle_digits, page, &snapshot->orientation);
+
+    switch (page)
+    {
+    case CALIBRATION_PAGE_PITCH_INSTALL:
+        value = offsets.pitch_install_tenth_deg;
+        break;
+    case CALIBRATION_PAGE_YAW_INSTALL:
+        value = offsets.yaw_install_tenth_deg;
+        LcdSegments_SetSymbol((uint8_t)LCD_SYMBOL_RANGE_SINGLE, true);
+        break;
+    case CALIBRATION_PAGE_YAW_ERROR:
+        value = offsets.yaw_error_tenth_deg;
+        LcdSegments_SetSymbol((uint8_t)LCD_SYMBOL_RANGE_CONTINUOUS, true);
+        break;
+    default:
+        break;
+    }
+
+    LcdSegments_SetSymbol((uint8_t)LCD_SYMBOL_PITCH_SIGN_MINUS, true);
+    LcdSegments_SetSymbol((uint8_t)LCD_SYMBOL_PITCH_SIGN_PLUS, value >= 0);
+    absolute = (uint32_t)((value < 0) ? -value : value);
+    LcdSegments_SetNumberRightAligned(value_digits, 4U, absolute);
+}
+
 static void display_battery_symbols(uint8_t level)
 {
     static const LcdSymbolId battery_symbols[] = {
@@ -892,6 +1378,56 @@ static void display_battery_symbols(uint8_t level)
     for (uint8_t i = 0U; i < (sizeof(battery_symbols) / sizeof(battery_symbols[0])); ++i)
     {
         LcdSegments_SetSymbol((uint8_t)battery_symbols[i], i < level);
+    }
+}
+
+static void log_lcd_refresh_data(const char* view, const AppStateSnapshot* snapshot)
+{
+    if (snapshot == 0)
+    {
+        return;
+    }
+
+    if (snapshot->orientation.valid)
+    {
+        APP_LOGI("lcd",
+                 "%s mode=%u imu[r_cd=%d p_cd=%d y_cd=%d t=%u]",
+                 view,
+                 (unsigned int)snapshot->mode,
+                 (int)snapshot->orientation.roll_cd,
+                 (int)snapshot->orientation.pitch_cd,
+                 (int)snapshot->orientation.yaw_cd,
+                 (unsigned int)snapshot->orientation.update_ms);
+    }
+
+    if (snapshot->range.valid &&
+        (snapshot->range.first_valid || snapshot->range.last_valid))
+    {
+        APP_LOGI("lcd",
+                 "%s mode=%u range[cmd=0x%02X f=%u/%u l=%u/%u st=%u t=%u]",
+                 view,
+                 (unsigned int)snapshot->mode,
+                 (unsigned int)snapshot->range.command,
+                 snapshot->range.first_valid ? 1U : 0U,
+                 (unsigned int)snapshot->range.first_distance_mm,
+                 snapshot->range.last_valid ? 1U : 0U,
+                 (unsigned int)snapshot->range.last_distance_mm,
+                 (unsigned int)snapshot->range.status,
+                 (unsigned int)snapshot->range.update_ms);
+    }
+
+    if (snapshot->gnss.valid && snapshot->gnss.fix)
+    {
+        APP_LOGI("lcd",
+                 "%s mode=%u gps[fix=%u sat=%u lat_e7=%d lon_e7=%d alt_cm=%d t=%u]",
+                 view,
+                 (unsigned int)snapshot->mode,
+                 snapshot->gnss.fix ? 1U : 0U,
+                 (unsigned int)snapshot->gnss.satellites,
+                 (int)snapshot->gnss.latitude_e7,
+                 (int)snapshot->gnss.longitude_e7,
+                 (int)snapshot->gnss.altitude_cm,
+                 (unsigned int)snapshot->gnss.update_ms);
     }
 }
 
@@ -1139,7 +1675,20 @@ static void display_task(void* argument)
         {
             LcdSegments_SetAll(true);
             LcdSegments_Flush();
+            log_lcd_refresh_data("imu_cal", &snapshot);
             vTaskDelay(pdMS_TO_TICKS(200U));
+            continue;
+        }
+
+        if (calibration_settings_active())
+        {
+            display_calibration_settings(azimuth_digits,
+                                         range_digits,
+                                         altitude_digits,
+                                         &snapshot);
+            LcdSegments_Flush();
+            log_lcd_refresh_data("offset", &snapshot);
+            vTaskDelay(pdMS_TO_TICKS(100U));
             continue;
         }
 
@@ -1363,6 +1912,7 @@ static void display_task(void* argument)
         }
 
         LcdSegments_Flush();
+        log_lcd_refresh_data("normal", &snapshot);
 
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
@@ -1396,6 +1946,8 @@ static void startup_task(void* argument)
 
     PowerManager_Init();
     MeasureCounter_Init();
+    MeasureCounter_GetCalibration(&g_calibration_offsets);
+    g_calibration_edit_offsets = g_calibration_offsets;
     AppState_SetMeasureCount(MeasureCounter_Get());
     vTaskDelay(pdMS_TO_TICKS(APP_STARTUP_SETTLE_MS));
 

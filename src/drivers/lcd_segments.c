@@ -205,6 +205,38 @@ void LcdSegments_SetDigit(uint8_t digit_id, int8_t value)
     }
 }
 
+void LcdSegments_SetChar(uint8_t digit_id, char value)
+{
+    const uint8_t segments[] = { SEG_A, SEG_B, SEG_C, SEG_D, SEG_E, SEG_F, SEG_G };
+    uint8_t mask = 0U;
+
+    if ((digit_id < LCD_FIRST_DIGIT_ID) || (digit_id > LCD_LAST_DIGIT_ID))
+    {
+        return;
+    }
+
+    switch (value)
+    {
+    case 'A': mask = SEG_A | SEG_B | SEG_C | SEG_E | SEG_F | SEG_G; break;
+    case 'C': mask = SEG_A | SEG_D | SEG_E | SEG_F; break;
+    case 'E': mask = SEG_A | SEG_D | SEG_E | SEG_F | SEG_G; break;
+    case 'H': mask = SEG_B | SEG_C | SEG_E | SEG_F | SEG_G; break;
+    case 'I': mask = SEG_B | SEG_C; break;
+    case 'P': mask = SEG_A | SEG_B | SEG_E | SEG_F | SEG_G; break;
+    case 'S': mask = SEG_A | SEG_C | SEG_D | SEG_F | SEG_G; break;
+    case 'V': mask = SEG_B | SEG_C | SEG_D | SEG_E | SEG_F; break;
+    case 'n': mask = SEG_C | SEG_E | SEG_G; break;
+    case 'r': mask = SEG_E | SEG_G; break;
+    case 't': mask = SEG_D | SEG_E | SEG_F | SEG_G; break;
+    default: break;
+    }
+
+    for (uint8_t i = 0U; i < SEGMENT_COUNT; ++i)
+    {
+        set_point(g_digit_points[digit_id][i], (mask & segments[i]) != 0U);
+    }
+}
+
 void LcdSegments_SetDash(uint8_t digit_id, bool on)
 {
     if ((digit_id < LCD_FIRST_DIGIT_ID) || (digit_id > LCD_LAST_DIGIT_ID))

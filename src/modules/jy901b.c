@@ -26,10 +26,9 @@
 #define JY901B_CAL_REF_ANGLE    0x0008U
 #define JY901B_RSW_ANGLE        0x0008U
 #define JY901B_RRATE_5HZ        0x0005U
-#define JY901B_ORIENT_HORIZONTAL 0x0000U
+#define JY901B_ORIENT_VERTICAL   0x0001U
 #define JY901B_AXIS9_ALGORITHM  0x0000U
 #define JY901B_WRITE_SETTLE_MS  200U
-#define JY901B_YAW_OFFSET_CD    9000L
 
 static uint8_t g_frame[JY901B_FRAME_LENGTH];
 static uint8_t g_index;
@@ -42,22 +41,6 @@ static int16_t read_i16_le(const uint8_t* bytes)
 static int16_t angle_to_centidegree(int16_t raw)
 {
     return (int16_t)(((int32_t)raw * 18000L) / 32768L);
-}
-
-static int16_t compensate_yaw_centidegree(int16_t yaw_cd)
-{
-    int32_t compensated = (int32_t)yaw_cd + JY901B_YAW_OFFSET_CD;
-
-    while (compensated > 18000L)
-    {
-        compensated -= 36000L;
-    }
-    while (compensated <= -18000L)
-    {
-        compensated += 36000L;
-    }
-
-    return (int16_t)compensated;
 }
 
 static bool write_register(uint8_t reg, uint16_t value)
@@ -103,7 +86,7 @@ bool Jy901b_Configure(void)
     if (!unlock_registers() ||
         !write_register(JY901B_REG_RRATE, JY901B_RRATE_5HZ) ||
         !write_register(JY901B_REG_RSW, JY901B_RSW_ANGLE) ||
-        !write_register(JY901B_REG_ORIENT, JY901B_ORIENT_HORIZONTAL) ||
+        !write_register(JY901B_REG_ORIENT, JY901B_ORIENT_VERTICAL) ||
         !write_register(JY901B_REG_AXIS6, JY901B_AXIS9_ALGORITHM))
     {
         return false;
@@ -147,9 +130,13 @@ bool Jy901b_StartMagCalibration(void)
 
 bool Jy901b_StopMagCalibration(void)
 {
-    return unlock_registers() &&
-           write_register(JY901B_REG_CALSW, JY901B_CAL_NORMAL) &&
-           save_registers();
+    if (!unlock_registers() ||
+        !write_register(JY901B_REG_CALSW, JY901B_CAL_NORMAL))
+    {
+        return false;
+    }
+    vTaskDelay(pdMS_TO_TICKS(100U));
+    return save_registers();
 }
 
 bool Jy901b_ProcessByte(uint8_t byte, OrientationData* data)
@@ -202,6 +189,6 @@ bool Jy901b_ProcessByte(uint8_t byte, OrientationData* data)
     data->valid = true;
     data->roll_cd = angle_to_centidegree(read_i16_le(&g_frame[2]));
     data->pitch_cd = angle_to_centidegree(read_i16_le(&g_frame[4]));
-    data->yaw_cd = compensate_yaw_centidegree(angle_to_centidegree(read_i16_le(&g_frame[6])));
+    data->yaw_cd = angle_to_centidegree(read_i16_le(&g_frame[6]));
     return true;
 }

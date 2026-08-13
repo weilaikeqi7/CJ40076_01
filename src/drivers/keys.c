@@ -16,6 +16,7 @@ typedef struct
 
 static DebouncedKey g_power_key;
 static DebouncedKey g_mode_key;
+static bool g_power_wait_release;
 
 static void key_reset(DebouncedKey* key, bool pressed, uint32_t now_ms)
 {
@@ -28,13 +29,33 @@ static void key_reset(DebouncedKey* key, bool pressed, uint32_t now_ms)
 
 void Keys_Init(void)
 {
-    key_reset(&g_power_key, Board_ReadPowerKey(), 0U);
+    const bool power_pressed = Board_ReadPowerKey();
+
+    key_reset(&g_power_key, power_pressed, 0U);
     key_reset(&g_mode_key, Board_ReadModeKey(), 0U);
+    g_power_wait_release = power_pressed;
 }
 
 static KeyEvent update_power_key(bool raw_pressed, uint32_t now_ms)
 {
     KeyEvent event = KEY_EVENT_NONE;
+
+    if (g_power_wait_release)
+    {
+        if (raw_pressed != g_power_key.last_raw_pressed)
+        {
+            g_power_key.last_raw_pressed = raw_pressed;
+            g_power_key.changed_ms = now_ms;
+        }
+
+        if ((!raw_pressed) &&
+            ((now_ms - g_power_key.changed_ms) >= APP_KEY_DEBOUNCE_MS))
+        {
+            key_reset(&g_power_key, false, now_ms);
+            g_power_wait_release = false;
+        }
+        return KEY_EVENT_NONE;
+    }
 
     if (raw_pressed != g_power_key.last_raw_pressed)
     {
@@ -109,4 +130,14 @@ KeyEvent Keys_Poll(uint32_t now_ms)
     }
 
     return update_mode_key(Board_ReadModeKey(), now_ms);
+}
+
+bool Keys_IsPowerPressed(void)
+{
+    return g_power_key.stable_pressed;
+}
+
+bool Keys_IsModePressed(void)
+{
+    return g_mode_key.stable_pressed;
 }

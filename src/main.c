@@ -33,10 +33,9 @@ int main(void)
 {
     BaseType_t tasks_created;
 
+    Board_Init();
     freertos_heap_region_init();
     AppDebug_Init();
-
-    Board_Init();
     tasks_created = AppTasks_Start();
     if (tasks_created != pdPASS)
     {

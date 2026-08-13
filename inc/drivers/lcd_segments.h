@@ -47,6 +47,7 @@ void LcdSegments_Init(void);
 void LcdSegments_ClearBuffer(void);
 void LcdSegments_SetAll(bool on);
 void LcdSegments_SetDigit(uint8_t digit_id, int8_t value);
+void LcdSegments_SetChar(uint8_t digit_id, char value);
 void LcdSegments_SetDash(uint8_t digit_id, bool on);
 void LcdSegments_SetNumberRightAligned(const uint8_t* digit_ids, uint8_t digit_count, uint32_t value);
 void LcdSegments_SetSignedNumberRightAligned(const uint8_t* digit_ids, uint8_t digit_count, int32_t value);

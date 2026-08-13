@@ -56,7 +56,12 @@ void Board_Init(void)
     RCC_EnableAPB2PeriphClk(RCC_APB2_PERIPH_GPIOA | RCC_APB2_PERIPH_GPIOB, ENABLE);
     NVIC_PriorityGroupConfig(NVIC_PriorityGroup_4);
 
+    power_key_pull = (BOARD_KEY_POWER_ACTIVE_HIGH != 0U) ? GPIO_Pull_Down : GPIO_Pull_Up;
+    BspGpio_InitInput(BOARD_KEY_POWER_PORT, BOARD_KEY_POWER_PIN, power_key_pull);
     BspGpio_InitOutput(BOARD_PWR_HOLD_PORT, BOARD_PWR_HOLD_PIN, false);
+    while (!Board_ReadPowerKey())
+    {
+    }
     Board_PowerHold(true);
 
     BspGpio_InitOutput(BOARD_PWR_RANGE_PORT, BOARD_PWR_RANGE_PIN, false);
@@ -64,9 +69,7 @@ void Board_Init(void)
     BspGpio_InitOutput(BOARD_PWR_GNSS_PORT, BOARD_PWR_GNSS_PIN, false);
 
     mode_key_pull = (BOARD_KEY_MODE_ACTIVE_HIGH != 0U) ? GPIO_Pull_Down : GPIO_Pull_Up;
-    power_key_pull = (BOARD_KEY_POWER_ACTIVE_HIGH != 0U) ? GPIO_Pull_Down : GPIO_Pull_Up;
     BspGpio_InitInput(BOARD_KEY_MODE_PORT, BOARD_KEY_MODE_PIN, mode_key_pull);
-    BspGpio_InitInput(BOARD_KEY_POWER_PORT, BOARD_KEY_POWER_PIN, power_key_pull);
 
     BspGpio_InitAnalog(BOARD_BAT_ADC_PORT, BOARD_BAT_ADC_PIN);
 
@@ -77,5 +80,4 @@ void Board_Init(void)
     BspGpio_InitInput(BOARD_LCD_IRQ_PORT, BOARD_LCD_IRQ_PIN, GPIO_Pull_Up);
 
     BspAdc_Init();
-
 }
