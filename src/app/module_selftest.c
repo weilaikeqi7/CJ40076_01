@@ -127,19 +127,19 @@ bool ModuleSelfTest_RunAll(void)
 {
     bool ok = true;
 
-    // BspUart_Reinit(BSP_UART_RANGE);
-    // Board_SetRangePower(true);
-    // vTaskDelay(pdMS_TO_TICKS(APP_RANGE_SELFTEST_POWER_ON_MS));
-    // ok = wait_range_selftest(APP_RANGE_SELFTEST_TIMEOUT_MS);
-    // if (ok)
-    // {
-    //     range_protocol2_warmup();
-    // }
-    // Board_SetRangePower(false);
-    // if (!ok)
-    // {
-    //     return false;
-    // }
+    BspUart_Reinit(BSP_UART_RANGE);
+    Board_SetRangePower(true);
+    vTaskDelay(pdMS_TO_TICKS(APP_RANGE_SELFTEST_POWER_ON_MS));
+    ok = wait_range_selftest(APP_RANGE_SELFTEST_TIMEOUT_MS);
+    if (ok)
+    {
+        range_protocol2_warmup();
+    }
+    Board_SetRangePower(false);
+    if (!ok)
+    {
+        return false;
+    }
 
     BspUart_Reinit(BSP_UART_IMU);
     Board_SetImuPower(true);
@@ -158,11 +158,11 @@ bool ModuleSelfTest_RunAll(void)
         return false;
     }
 
-    // BspUart_Reinit(BSP_UART_GNSS);
-    // Board_SetGnssPower(true);
-    // vTaskDelay(pdMS_TO_TICKS(APP_GNSS_POWER_ON_MS));
-    // ok = wait_gnss_any_data(APP_GNSS_SELFTEST_TIMEOUT_MS);
-    // Board_SetGnssPower(false);
+    BspUart_Reinit(BSP_UART_GNSS);
+    Board_SetGnssPower(true);
+    vTaskDelay(pdMS_TO_TICKS(APP_GNSS_POWER_ON_MS));
+    ok = wait_gnss_any_data(APP_GNSS_SELFTEST_TIMEOUT_MS);
+    Board_SetGnssPower(false);
 
     return ok;
 }
