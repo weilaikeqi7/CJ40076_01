@@ -28,7 +28,6 @@
 #define APP_CALIBRATION_HOLD_START_MS 600U
 #define APP_CALIBRATION_REPEAT_MS     100U
 #define APP_CALIBRATION_NEXT_PAGE_MS 1000U
-#define APP_CALIBRATION_TIMEOUT_MS    30000U
 
 typedef enum
 {
@@ -53,7 +52,6 @@ static volatile bool g_lcd_calibration_prompt;
 static volatile CalibrationPage g_calibration_page;
 static CalibrationOffsets g_calibration_offsets;
 static CalibrationOffsets g_calibration_edit_offsets;
-static uint32_t g_calibration_last_activity_ms;
 static uint32_t g_calibration_power_hold_ms;
 static uint32_t g_calibration_mode_hold_ms;
 static uint32_t g_calibration_power_repeat_ms;
@@ -524,7 +522,6 @@ static void enter_calibration_settings(void)
     g_calibration_page = CALIBRATION_PAGE_PITCH_INSTALL;
     taskEXIT_CRITICAL();
 
-    g_calibration_last_activity_ms = tick_ms();
     reset_calibration_key_state();
 }
 
@@ -558,7 +555,7 @@ static void save_calibration_settings(void)
     leave_calibration_settings();
 }
 
-static void next_calibration_page(uint32_t now_ms)
+static void next_calibration_page(void)
 {
     taskENTER_CRITICAL();
     if ((g_calibration_page >= CALIBRATION_PAGE_PITCH_INSTALL) &&
@@ -571,10 +568,9 @@ static void next_calibration_page(uint32_t now_ms)
         g_calibration_page = CALIBRATION_PAGE_PITCH_INSTALL;
     }
     taskEXIT_CRITICAL();
-    g_calibration_last_activity_ms = now_ms;
 }
 
-static void adjust_calibration_value(int16_t delta, uint32_t now_ms)
+static void adjust_calibration_value(int16_t delta)
 {
     int16_t* value = 0;
     int16_t minimum = 0;
@@ -618,10 +614,6 @@ static void adjust_calibration_value(int16_t delta, uint32_t now_ms)
     }
     taskEXIT_CRITICAL();
 
-    if (value != 0)
-    {
-        g_calibration_last_activity_ms = now_ms;
-    }
 }
 
 static void handle_calibration_settings_input(KeyEvent event, uint32_t now_ms)
@@ -645,7 +637,7 @@ static void handle_calibration_settings_input(KeyEvent event, uint32_t now_ms)
         {
             if ((now_ms - g_calibration_both_hold_ms) >= APP_CALIBRATION_NEXT_PAGE_MS)
             {
-                next_calibration_page(now_ms);
+                next_calibration_page();
                 g_calibration_both_active = false;
                 g_calibration_wait_release = true;
             }
@@ -677,20 +669,16 @@ static void handle_calibration_settings_input(KeyEvent event, uint32_t now_ms)
         {
             leave_calibration_settings();
         }
-        else if ((now_ms - g_calibration_last_activity_ms) >= APP_CALIBRATION_TIMEOUT_MS)
-        {
-            leave_calibration_settings();
-        }
         return;
     }
 
     if ((event == KEY_EVENT_POWER_SHORT) && (!g_calibration_power_repeated))
     {
-        adjust_calibration_value(1, now_ms);
+        adjust_calibration_value(1);
     }
     else if ((event == KEY_EVENT_MODE_SHORT) && (!g_calibration_mode_repeated))
     {
-        adjust_calibration_value(-1, now_ms);
+        adjust_calibration_value(-1);
     }
 
     if (power_pressed)
@@ -703,7 +691,7 @@ static void handle_calibration_settings_input(KeyEvent event, uint32_t now_ms)
         else if (((now_ms - g_calibration_power_hold_ms) >= APP_CALIBRATION_HOLD_START_MS) &&
                  ((now_ms - g_calibration_power_repeat_ms) >= APP_CALIBRATION_REPEAT_MS))
         {
-            adjust_calibration_value(1, now_ms);
+            adjust_calibration_value(1);
             g_calibration_power_repeat_ms = now_ms;
             g_calibration_power_repeated = true;
         }
@@ -725,7 +713,7 @@ static void handle_calibration_settings_input(KeyEvent event, uint32_t now_ms)
         else if (((now_ms - g_calibration_mode_hold_ms) >= APP_CALIBRATION_HOLD_START_MS) &&
                  ((now_ms - g_calibration_mode_repeat_ms) >= APP_CALIBRATION_REPEAT_MS))
         {
-            adjust_calibration_value(-1, now_ms);
+            adjust_calibration_value(-1);
             g_calibration_mode_repeat_ms = now_ms;
             g_calibration_mode_repeated = true;
         }
@@ -737,10 +725,6 @@ static void handle_calibration_settings_input(KeyEvent event, uint32_t now_ms)
         g_calibration_mode_repeated = false;
     }
 
-    if ((now_ms - g_calibration_last_activity_ms) >= APP_CALIBRATION_TIMEOUT_MS)
-    {
-        leave_calibration_settings();
-    }
 }
 
 static void enter_imu_calibration_power(void)
