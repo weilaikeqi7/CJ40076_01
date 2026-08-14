@@ -129,7 +129,6 @@ bool ModuleSelfTest_RunAll(void)
 
     BspUart_Reinit(BSP_UART_RANGE);
     Board_SetRangePower(true);
-    vTaskDelay(pdMS_TO_TICKS(APP_RANGE_SELFTEST_POWER_ON_MS));
     ok = wait_range_selftest(APP_RANGE_SELFTEST_TIMEOUT_MS);
     if (ok)
     {
@@ -143,7 +142,6 @@ bool ModuleSelfTest_RunAll(void)
 
     BspUart_Reinit(BSP_UART_IMU);
     Board_SetImuPower(true);
-    vTaskDelay(pdMS_TO_TICKS(APP_IMU_POWER_ON_MS));
     ok = Jy901b_Configure();
     if (ok)
     {
@@ -160,7 +158,6 @@ bool ModuleSelfTest_RunAll(void)
 
     BspUart_Reinit(BSP_UART_GNSS);
     Board_SetGnssPower(true);
-    vTaskDelay(pdMS_TO_TICKS(APP_GNSS_POWER_ON_MS));
     ok = wait_gnss_any_data(APP_GNSS_SELFTEST_TIMEOUT_MS);
     Board_SetGnssPower(false);
 

@@ -170,7 +170,6 @@ static void range_power_set(bool enabled)
     {
         BspUart_Reinit(BSP_UART_RANGE);
         Board_SetRangePower(true);
-        vTaskDelay(pdMS_TO_TICKS(APP_RANGE_POWER_ON_MS));
         BspUart_FlushRx(BSP_UART_RANGE);
         Rangefinder_Reset();
     }
@@ -204,7 +203,6 @@ static void imu_power_set(bool enabled)
         AppState_ClearOrientation();
         BspUart_Reinit(BSP_UART_IMU);
         Board_SetImuPower(true);
-        vTaskDelay(pdMS_TO_TICKS(APP_IMU_POWER_ON_MS));
         BspUart_FlushRx(BSP_UART_IMU);
         Jy901b_Reset();
         AppState_ClearOrientation();
@@ -232,7 +230,6 @@ static void gnss_power_set(bool enabled)
         AppState_ClearGnss();
         BspUart_Reinit(BSP_UART_GNSS);
         Board_SetGnssPower(true);
-        vTaskDelay(pdMS_TO_TICKS(APP_GNSS_POWER_ON_MS));
         BspUart_FlushRx(BSP_UART_GNSS);
         Bv220_Reset();
         AppState_ClearGnss();
@@ -1933,7 +1930,6 @@ static void startup_task(void* argument)
     MeasureCounter_GetCalibration(&g_calibration_offsets);
     g_calibration_edit_offsets = g_calibration_offsets;
     AppState_SetMeasureCount(MeasureCounter_Get());
-    vTaskDelay(pdMS_TO_TICKS(APP_STARTUP_SETTLE_MS));
 
     Battery_Read(&battery);
     AppState_UpdateBattery(&battery);
