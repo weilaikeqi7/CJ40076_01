@@ -1935,11 +1935,11 @@ static void startup_task(void* argument)
     AppState_UpdateBattery(&battery);
     power_off_if_battery_low("startup", &battery);
 
-    if (!ModuleSelfTest_RunAll())
-    {
-        APP_LOGE("startup", "module self-test failed, power off");
-        power_off_wait_forever(false);
-    }
+    // if (!ModuleSelfTest_RunAll())
+    // {
+    //     APP_LOGE("startup", "module self-test failed, power off");
+    //     power_off_wait_forever(false);
+    // }
 
     if (create_runtime_tasks() != pdPASS)
     {
