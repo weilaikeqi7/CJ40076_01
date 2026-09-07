@@ -76,6 +76,12 @@ set(PROJECT_SOURCES
     src/app/app_log.c
     src/app/app_runtime_stats.c
     src/app/app_state.c
+    src/app/app_calibration.c
+    src/app/app_control.c
+    src/app/app_display.c
+    src/app/app_io.c
+    src/app/app_measure.c
+    src/app/app_runtime.c
     src/app/app_tasks.c
     src/app/measure_counter.c
     src/app/module_selftest.c
