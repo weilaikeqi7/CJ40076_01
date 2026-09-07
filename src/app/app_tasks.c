@@ -64,8 +64,8 @@ static bool g_calibration_wait_release;
 static bool g_measure_pending;
 static AppWorkMode g_measure_mode = APP_MODE_SINGLE;
 static uint32_t g_measure_start_ms;
+static uint32_t g_continuous_next_measure_ms;
 static uint32_t g_mode_click_last_ms;
-static uint8_t g_continuous_sample_count;
 static uint8_t g_mode_click_count;
 static bool g_range_cycle_active;
 static bool g_range_cycle_has_first;
@@ -175,16 +175,11 @@ static void range_power_set(bool enabled)
     }
     else
     {
-        if (g_continuous_started)
-        {
-            Rangefinder_Stop();
-            vTaskDelay(pdMS_TO_TICKS(20));
-        }
         Board_SetRangePower(false);
         g_continuous_started = false;
         g_measure_pending = false;
         g_measure_mode = APP_MODE_SINGLE;
-        g_continuous_sample_count = 0U;
+        g_continuous_next_measure_ms = 0U;
         range_cycle_reset();
     }
 
@@ -302,7 +297,7 @@ static void publish_range_result(uint32_t now_ms)
     RangefinderData result;
 
     result.valid = true;
-    result.command = g_continuous_started ? 0x04U : 0x02U;
+    result.command = 0x02U;
     result.distance_mm = g_range_cycle_has_first ? g_range_cycle_first_mm :
         (g_range_cycle_has_last ? g_range_cycle_last_mm : 0U);
     result.first_distance_mm = g_range_cycle_first_mm;
@@ -322,7 +317,12 @@ static void publish_range_result(uint32_t now_ms)
 
     AppState_UpdateRange(&result);
     AppState_SetMeasureCount(MeasureCounter_Increment());
-    ++g_continuous_sample_count;
+
+    if (g_continuous_started)
+    {
+        g_measure_pending = false;
+        g_continuous_next_measure_ms = g_measure_start_ms + APP_RANGE_CONTINUOUS_INTERVAL_MS;
+    }
 
     range_cycle_reset();
 }
@@ -887,7 +887,6 @@ static void start_measurement(AppWorkMode mode)
 {
     g_measure_mode = mode;
     g_measure_pending = true;
-    g_continuous_sample_count = 0U;
     range_cycle_reset();
     AppState_ClearRange();
 
@@ -908,14 +907,12 @@ static void start_measurement(AppWorkMode mode)
     {
         g_continuous_started = true;
         g_range_last_ack_command = 0U;
-        Rangefinder_SetContinuousRate(RANGE_RATE_1HZ);
-        (void)wait_range_ack(0xA1U, APP_RANGE_COMMAND_ACK_TIMEOUT_MS);
-        g_range_last_ack_command = 0U;
         Rangefinder_SetTargetMode(RANGE_TARGET_MULTI);
         (void)wait_range_ack(0x03U, APP_RANGE_COMMAND_ACK_TIMEOUT_MS);
         g_measure_start_ms = tick_ms();
+        g_continuous_next_measure_ms = 0U;
         g_range_last_ack_command = 0U;
-        Rangefinder_StartContinuous();
+        Rangefinder_StartSingle();
     }
     else
     {
@@ -1043,32 +1040,36 @@ static void close_measurement_if_done(uint32_t now_ms)
 {
     if (g_continuous_started)
     {
-        if (g_range_cycle_active &&
+        if (g_measure_pending &&
+            g_range_cycle_active &&
             ((now_ms - g_range_cycle_last_rx_ms) >= APP_RANGE_CONTINUOUS_GAP_TIMEOUT_MS))
         {
             publish_range_result(now_ms);
+            return;
         }
 
-        if (g_continuous_sample_count >= APP_RANGE_CONTINUOUS_SAMPLES)
+        if (g_measure_pending &&
+            ((now_ms - g_measure_start_ms) >= APP_RANGE_CONTINUOUS_TIMEOUT_MS))
         {
-            finish_measurement_power();
-        }
-        else if ((now_ms - g_measure_start_ms) >= APP_RANGE_CONTINUOUS_TIMEOUT_MS)
-        {
-            if (g_continuous_sample_count == 0U)
+            if (!g_range_command_ack_received)
             {
-                if (!g_range_command_ack_received)
-                {
-                    APP_LOGW("control", "continuous range timeout, rx_bytes=%u frames=%u",
-                             (unsigned int)g_range_rx_bytes_since_start,
-                             (unsigned int)g_range_frames_since_start);
-                }
-                else
-                {
-                }
-                publish_range_result(now_ms);
+                APP_LOGW("control", "continuous range timeout, rx_bytes=%u frames=%u",
+                         (unsigned int)g_range_rx_bytes_since_start,
+                         (unsigned int)g_range_frames_since_start);
             }
-            finish_measurement_power();
+            publish_range_result(now_ms);
+            return;
+        }
+
+        if ((!g_measure_pending) &&
+            ((int32_t)(now_ms - g_continuous_next_measure_ms) >= 0))
+        {
+            g_measure_pending = true;
+            range_cycle_reset();
+            AppState_ClearRange();
+            g_measure_start_ms = now_ms;
+            g_range_last_ack_command = 0U;
+            Rangefinder_StartSingle();
         }
         return;
     }
@@ -1816,11 +1817,11 @@ static void display_task(void* argument)
             int32_t display_altitude_cm = snapshot.gnss.altitude_cm;
             const DisplayTargetCoordinate* display_target = 0;
             bool coord_range_is_last = false;
-            const bool target_mode_display = multi_target_cache.has_result;
+            const bool target_mode_display = range_result_current && multi_target_cache.has_result;
             const bool local_available = snapshot.gnss.fix;
             const bool show_latitude = ((snapshot.uptime_ms / 1000U) & 1U) != 0U;
 
-            if (multi_target_cache.valid)
+            if (range_result_current && multi_target_cache.valid)
             {
                 if (multi_target_cache.first_valid && multi_target_cache.last_valid)
                 {
