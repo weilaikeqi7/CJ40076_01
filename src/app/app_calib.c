@@ -1,6 +1,6 @@
 /**
  * @file app_calib.c
- * @brief 校准与补偿设置状态机实现（与 03 相同逻辑，LCD 全显经 LcdSegments）
+ * @brief 校准与补偿设置状态机实现
  */
 #include "app_calib.h"
 
@@ -26,13 +26,6 @@ static void ensure_imu_on(void)
     board_uart_flush_rx(BOARD_UART_JY901B);
 }
 
-/** 内部校准期间 LCD 全显 */
-static void lcd_full_on(void)
-{
-    LcdSegments_SetAll(true);
-    LcdSegments_Flush();
-}
-
 static int16_t* page_ptr(void)
 {
     switch (state)
@@ -42,6 +35,7 @@ static int16_t* page_ptr(void)
     case CALIB_HIT:
         return &work.hit_c01;
     case CALIB_HER:
+        return &work.her_c01;
     default:
         return &work.her_c01;
     }
@@ -111,7 +105,8 @@ bool calib_handle_key(const app_key_event_t* evt)
             case 5: /* 五击：磁场校准开始 */
                 ensure_imu_on();
                 state = CALIB_MAG;
-                lcd_full_on();
+                LcdSegments_SetAll(true); /* 校准期间 LCD 全显 */
+                LcdSegments_Flush();
                 jy901b_calib_mag_start();
                 LOGI("calib: mag calibration started\r\n");
                 return true;
@@ -124,18 +119,29 @@ bool calib_handle_key(const app_key_event_t* evt)
             case 8: /* 八击：加速度校准（阻塞约 4.5s，先全显再阻塞） */
                 ensure_imu_on();
                 state = CALIB_ACC_BUSY;
-                lcd_full_on();
+                LcdSegments_SetAll(true);
+                LcdSegments_Flush();
                 jy901b_calib_accel();
                 state = CALIB_NONE;
                 LOGI("calib: accel calibration done\r\n");
                 return true;
-            case 9: /* 九击：角度参考（阻塞约 3.5s，先全显再阻塞） */
+            case 9: /* 九击：角度校准（阻塞约 3.5s，先全显再阻塞） */
                 ensure_imu_on();
                 state = CALIB_ANG_BUSY;
-                lcd_full_on();
+                LcdSegments_SetAll(true);
+                LcdSegments_Flush();
                 jy901b_set_angle_ref();
                 state = CALIB_NONE;
                 LOGI("calib: angle reference done\r\n");
+                return true;
+            case 10: /* 十击：JY901B 恢复出厂设置（先全显再阻塞） */
+                ensure_imu_on();
+                state = CALIB_ANG_BUSY;
+                LcdSegments_SetAll(true);
+                LcdSegments_Flush();
+                jy901b_factory_reset();
+                state = CALIB_NONE;
+                LOGI("calib: factory reset done\r\n");
                 return true;
             default:
                 break;
@@ -161,7 +167,8 @@ bool calib_handle_key(const app_key_event_t* evt)
     {
         if (state == CALIB_PIT)
         {
-            state = CALIB_HIT; /* PIt -> HIt 切页 */
+            /* PIt -> HIt 切页（不保存，退出时统一保存） */
+            state = CALIB_HIT;
             LOGI("calib: PIt -> HIt\r\n");
         }
         else

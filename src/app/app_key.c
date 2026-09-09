@@ -1,6 +1,8 @@
 /**
  * @file app_key.c
- * @brief 按键扫描实现（与 03 业务一致，GPIO 读数来自 board 层）
+ * @brief 按键扫描实现：消抖 + 多击 + 长按 + 双键组合 + 校准页连发
+ *
+ * 校准页时序：短按 <800ms 单击调节一步；按住 >=800ms 后每 100ms 连发。
  */
 #include "app_key.h"
 
@@ -9,29 +11,29 @@
 
 #define SCAN_MS APP_KEY_SCAN_MS
 
-/** 校准页：按住超过该时间开始连发（同时不再判定为单击） */
+/** 校准页：按住超过该时间开始连发（同时也不再判定为单击） */
 #define CALIB_HOLD_MS 800U
 
 typedef struct
 {
-    bool     raw_last;
-    bool     stable;
-    uint16_t debounce_ms;
-    uint32_t press_ms;
-    bool     long_fired;
-    bool     hold_fired;
-    uint32_t repeat_ms;
+    bool     raw_last;     /* 上次采样原始电平 */
+    bool     stable;       /* 消抖后稳定状态：true=按下 */
+    uint16_t debounce_ms;  /* 电平不一致持续计时 */
+    uint32_t press_ms;     /* 稳定按下持续计时 */
+    bool     long_fired;   /* 长按事件已触发 */
+    bool     hold_fired;   /* 校准页连发已启动 */
+    uint32_t repeat_ms;    /* 连发计时 */
 } key_state_t;
 
 static key_state_t key_power;
 static key_state_t key_mode;
 
-static uint8_t  click_count;
-static uint32_t click_expire_ms;
+static uint8_t  click_count;     /* 模式键多击计数 */
+static uint32_t click_expire_ms; /* 多击窗口超时计时 */
 static bool     calib_mode;
 static bool     both_long_fired;
 static uint32_t both_press_ms;
-static bool     boot_armed;
+static bool     boot_armed; /* 开机首次按压抑制：松手后才武装 */
 
 static void key_sample(key_state_t* ks, bool raw_down)
 {
@@ -95,6 +97,7 @@ bool app_key_mode_down(void)
     return key_mode.stable;
 }
 
+/** 校准页按键：单击/连发。raw_evt_short/raw_evt_repeat 为对应事件位 */
 static uint16_t calib_key_events(key_state_t* ks, uint16_t evt_short, uint16_t evt_repeat)
 {
     uint16_t evt = 0U;
@@ -114,6 +117,7 @@ static uint16_t calib_key_events(key_state_t* ks, uint16_t evt_short, uint16_t e
     }
     else if (ks->press_ms > 0U)
     {
+        /* 已松开：未进入连发才算单击；随后清 press_ms 防止重复上报 */
         if (!ks->hold_fired && ks->press_ms < CALIB_HOLD_MS)
         {
             evt |= evt_short;
@@ -149,6 +153,7 @@ app_key_event_t app_key_scan(void)
             both_long_fired  = true;
             evt.evt         |= APP_KEY_EVT_BOTH_LONG;
         }
+        /* 双键期间屏蔽单击/连发计时 */
         key_power.press_ms = 0U;
         key_mode.press_ms  = 0U;
         return evt;
@@ -173,7 +178,7 @@ app_key_event_t app_key_scan(void)
         if (!key_power.long_fired && key_power.press_ms >= APP_KEY_LONG_MS)
         {
             key_power.long_fired = true;
-            evt.evt             |= APP_KEY_EVT_POWER_LONG;
+            evt.evt             |= APP_KEY_EVT_POWER_LONG; /* 到 3s 立即触发 */
         }
     }
     else if (key_power.press_ms > 0U)
@@ -185,10 +190,10 @@ app_key_event_t app_key_scan(void)
         key_power.press_ms = 0U;
     }
 
-    /* ---------- 正常模式：模式键多击（600ms 窗口） ---------- */
+    /* ---------- 正常模式：模式键多击（最多10击，600ms 窗口） ---------- */
     if (!key_mode.stable && key_mode.press_ms > 0U)
     {
-        if (key_mode.press_ms < APP_KEY_LONG_MS && click_count < 9U)
+        if (key_mode.press_ms < APP_KEY_LONG_MS && click_count < 10U)
         {
             click_count++;
             click_expire_ms = 0U;
