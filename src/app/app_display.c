@@ -54,12 +54,41 @@ static void draw_compass(int32_t heading_c01, bool valid)
         return;
     }
 
-    idx = (uint8_t)(((heading_c01 + 2250) % 36000) / 4500);
+    idx = (uint8_t)(((heading_c01 + 2250) % APP_HEADING_PERIOD_C01) / 4500);
     LcdSegments_SetSymbol(dir_map[idx].a, true);
     if (dir_map[idx].b != 0U)
     {
         LcdSegments_SetSymbol(dir_map[idx].b, true);
     }
+}
+
+/**
+ * @brief LCD 俯仰显示映射：±85.00°~±88.00°线性映射为±85.00°~±90.00°。
+ *        只改变显示值，不改变坐标和高程解算使用的姿态值。
+ */
+static int32_t pitch_display_map(int32_t pitch_c01)
+{
+    const int32_t start_c01 = APP_PIT_DISPLAY_MAP_START_C01;
+    const int32_t end_c01   = APP_PIT_DISPLAY_MAP_END_C01;
+    const int32_t max_c01   = APP_PIT_MAX_C01;
+    bool          negative  = pitch_c01 < 0;
+    int32_t       abs_c01   = negative ? -pitch_c01 : pitch_c01;
+    int32_t       mapped_c01;
+
+    if (abs_c01 <= start_c01)
+    {
+        return pitch_c01;
+    }
+    if (abs_c01 >= end_c01)
+    {
+        return negative ? -max_c01 : max_c01;
+    }
+
+    mapped_c01 = start_c01 +
+                 ((abs_c01 - start_c01) * (max_c01 - start_c01) +
+                  (end_c01 - start_c01) / 2) /
+                     (end_c01 - start_c01);
+    return negative ? -mapped_c01 : mapped_c01;
 }
 
 /** 中行俯仰：±XX°（整数，digits 26 27，负号/正号，P 与 °） */
@@ -79,12 +108,12 @@ static void draw_pitch(int32_t pitch_c01, bool valid)
         return;
     }
 
+    pitch_c01 = pitch_display_map(pitch_c01);
     abs_deg = (uint32_t)(pitch_c01 < 0 ? -pitch_c01 : pitch_c01) / 100U;
     if (abs_deg > 99U)
     {
         abs_deg = 99U; /* 两位显示上限 */
     }
-
     LcdSegments_SetDigit(26, abs_deg >= 10U ? (int8_t)(abs_deg / 10U) : -1);
     LcdSegments_SetDigit(27, (int8_t)(abs_deg % 10U));
     LcdSegments_SetSymbol(LCD_SYMBOL_PITCH_SIGN_MINUS, pitch_c01 < 0);
@@ -248,8 +277,9 @@ void display_render(const disp_state_t* s)
         }
         else
         {
-            LcdSegments_SetNumberRightAligned(digits_heading, 3U,
-                                              s->att_valid ? (uint32_t)(s->heading_c01 / 100U) : 0U);
+            LcdSegments_SetNumberRightAligned(
+                digits_heading, 3U,
+                s->att_valid ? (uint32_t)(s->heading_c01 / 100U) : 0U);
             if (!s->att_valid)
             {
                 draw_dashes(digits_heading, 3U);
@@ -276,7 +306,8 @@ void display_render(const disp_state_t* s)
     {
         if (s->att_valid)
         {
-            LcdSegments_SetNumberRightAligned(digits_heading, 3U, (uint32_t)(s->heading_c01 / 100U));
+            LcdSegments_SetNumberRightAligned(digits_heading, 3U,
+                                              (uint32_t)(s->heading_c01 / 100U));
         }
         else
         {

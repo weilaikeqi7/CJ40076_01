@@ -36,9 +36,18 @@
 #define APP_DEFAULT_HIT_C01 9000
 #define APP_DEFAULT_HER_C01 0
 
+/** 补偿范围（0.01 度）：PIt ±90°，HIt/HEr ±180° */
 #define APP_PIT_MAX_C01 9000
 #define APP_HIT_MAX_C01 18000
 #define APP_HER_MAX_C01 18000
+
+/** LCD 俯仰显示映射：实际 ±85°~±88° 映射为显示 ±85°~±90° */
+#define APP_PIT_DISPLAY_MAP_START_C01 8500
+#define APP_PIT_DISPLAY_MAP_END_C01   8800
+
+/** 航向显示范围（0.01 度）：0.00°~359.99° */
+#define APP_HEADING_PERIOD_C01 36000
+#define APP_HEADING_MAX_C01    35999
 
 #define APP_IMU_TIMEOUT_MS  500U
 #define APP_GNSS_TIMEOUT_MS 2500U
