@@ -1,312 +1,232 @@
-#include "app_internal.h"
+/**
+ * @file app_measure.c
+ * @brief 测距轮次状态机实现
+ */
+#include "app_measure.h"
 
-#include "app_log.h"
-#include "app_state.h"
-#include "board_config.h"
-#include "bsp_uart.h"
-#include "measure_counter.h"
-#include "rangefinder.h"
+#include "app_config.h"
+#include "ranger.h"
+#include "rtt_log.h"
+
+#include "FreeRTOS.h"
 #include "task.h"
 
-static bool g_continuous_started;
-static bool g_measure_pending;
-static AppWorkMode g_measure_mode = APP_MODE_SINGLE;
-static uint32_t g_measure_start_ms;
-static uint32_t g_continuous_next_measure_ms;
-static bool g_range_cycle_active;
-static bool g_range_cycle_has_first;
-static bool g_range_cycle_has_last;
-static uint8_t g_range_cycle_last_index;
-static uint8_t g_range_cycle_max_index;
-static uint32_t g_range_cycle_last_rx_ms;
-static uint32_t g_range_cycle_first_mm;
-static uint32_t g_range_cycle_last_mm;
-static uint8_t g_range_cycle_last_status;
-static uint32_t g_range_rx_bytes_since_start;
-static uint32_t g_range_frames_since_start;
-static bool g_range_command_ack_received;
-static volatile uint8_t g_range_last_ack_command;
+#include <string.h>
 
-static void range_cycle_reset(void)
+typedef enum
 {
-    g_range_cycle_active = false;
-    g_range_cycle_has_first = false;
-    g_range_cycle_has_last = false;
-    g_range_cycle_last_index = 0U;
-    g_range_cycle_max_index = 0U;
-    g_range_cycle_last_rx_ms = 0U;
-    g_range_cycle_first_mm = 0U;
-    g_range_cycle_last_mm = 0U;
-    g_range_cycle_last_status = 0U;
-    g_range_rx_bytes_since_start = 0U;
-    g_range_frames_since_start = 0U;
-    g_range_command_ack_received = false;
-    g_range_last_ack_command = 0U;
+    ST_IDLE = 0,     /* 无测量 */
+    ST_ROUND,        /* 轮次进行中（等回包/聚合） */
+    ST_SESSION_WAIT, /* 连续/测试：轮间等待下一周期 */
+} meas_state_t;
+
+static meas_state_t     state = ST_IDLE;
+static meas_mode_t      mode  = MEAS_MODE_SINGLE;
+static measure_result_t result;
+static bool             published_flag;
+
+static uint32_t round_start_tick; /* 本轮发起时刻 */
+static uint32_t last_frame_tick;  /* 本轮最近回包时刻 */
+static uint32_t next_round_tick;  /* 下一轮计划时刻 */
+static bool     any_frame;        /* 本轮收到过有效距离帧 */
+static uint8_t  frame_count;      /* 本轮有效帧数 */
+static uint8_t  max_target_no;    /* 本轮最大目标编号 */
+
+static void round_begin(void)
+{
+    /* 每轮均先设置多目标模式，再发单次测距 */
+    ranger_set_target_mode(RANGER_TARGET_MULTI);
+    ranger_range_single();
+
+    state            = ST_ROUND;
+    round_start_tick = xTaskGetTickCount();
+    last_frame_tick  = round_start_tick;
+    any_frame        = false;
+    frame_count      = 0U;
+    max_target_no    = 0U;
+
+    memset(&result, 0, sizeof(result));
 }
 
-void AppMeasureResetOnRangePowerOff(void)
+static void round_publish(void)
 {
-    g_continuous_started = false;
-    g_measure_pending = false;
-    g_measure_mode = APP_MODE_SINGLE;
-    g_continuous_next_measure_ms = 0U;
-    range_cycle_reset();
-}
+    result.publish_tick = xTaskGetTickCount();
+    published_flag      = true;
+    state               = ST_IDLE;
 
-bool AppMeasurePending(void)
-{
-    return g_measure_pending;
-}
+    LOGI("range: publish near=%s%u mm far=%s%u mm\r\n", result.near_valid ? "" : "-- ",
+         result.near_valid ? (unsigned int)result.near_mm : 0U, result.far_valid ? "" : "-- ",
+         result.far_valid ? (unsigned int)result.far_mm : 0U);
 
-bool AppMeasureContinuousStarted(void)
-{
-    return g_continuous_started;
-}
-
-bool AppMeasureRangeResultCurrent(const AppStateSnapshot* snapshot)
-{
-    return (snapshot != 0) &&
-           snapshot->range.valid &&
-           (snapshot->range.app_mode == (uint8_t)snapshot->mode) &&
-           ((!g_measure_pending) || (snapshot->range.update_ms >= g_measure_start_ms));
-}
-
-static bool wait_range_ack(uint8_t command, uint32_t timeout_ms)
-{
-    const uint32_t start_ms = AppTickMs();
-
-    while ((AppTickMs() - start_ms) < timeout_ms)
+    /* 连续/测试：排定下一轮 */
+    if (mode == MEAS_MODE_CONT)
     {
-        if (g_range_last_ack_command == command)
+        state          = ST_SESSION_WAIT;
+        next_round_tick = round_start_tick + pdMS_TO_TICKS(APP_MEASURE_CONT_PERIOD_MS);
+    }
+    else if (mode == MEAS_MODE_TEST)
+    {
+        state          = ST_SESSION_WAIT;
+        next_round_tick = round_start_tick + pdMS_TO_TICKS(APP_MEASURE_TEST_PERIOD_MS);
+    }
+}
+
+static void round_aggregate_frame(const ranger_range_t* fr)
+{
+    uint32_t dist_mm = (uint32_t)(fr->distance_m * 1000.0f + 0.5f);
+    uint8_t  st_low  = fr->status & 0x0FU;
+
+    if (st_low == 0x04U)
+    {
+        return; /* 超距帧不改变聚合（静默后按当前聚合结果发布） */
+    }
+
+    frame_count++;
+    any_frame       = true;
+    last_frame_tick = xTaskGetTickCount();
+
+    if (fr->target_no > max_target_no)
+    {
+        max_target_no = fr->target_no;
+    }
+
+    /* 首目标：单目标/有前目标/多目标编号最小 */
+    if (!result.near_valid || dist_mm < result.near_mm)
+    {
+        result.near_valid = true;
+        result.near_mm    = dist_mm;
+    }
+
+    /* 末目标：有后目标帧，或多目标编号 > 0 的最远帧 */
+    if (st_low == 0x02U || st_low == 0x03U || fr->target_no > 0U)
+    {
+        if (!result.far_valid || dist_mm > result.far_mm)
         {
-            return true;
-        }
-        vTaskDelay(pdMS_TO_TICKS(5U));
-    }
-
-    return false;
-}
-
-static void publish_range_result(uint32_t now_ms)
-{
-    RangefinderData result;
-
-    result.valid = true;
-    result.command = 0x02U;
-    result.distance_mm = g_range_cycle_has_first ? g_range_cycle_first_mm :
-        (g_range_cycle_has_last ? g_range_cycle_last_mm : 0U);
-    result.first_distance_mm = g_range_cycle_first_mm;
-    result.last_distance_mm = g_range_cycle_last_mm;
-    result.status = g_range_cycle_last_status;
-    result.target_index = 0U;
-    result.first_valid = g_range_cycle_has_first;
-    result.last_valid = g_range_cycle_has_last;
-    result.self_status[0] = 0U;
-    result.self_status[1] = 0U;
-    result.self_status[2] = 0U;
-    result.self_status[3] = 0U;
-    result.self_test_ok = false;
-    result.continuous = g_continuous_started;
-    result.update_ms = now_ms;
-    result.app_mode = (uint8_t)g_measure_mode;
-
-    AppState_UpdateRange(&result);
-    AppState_SetMeasureCount(MeasureCounter_Increment());
-
-    if (g_continuous_started)
-    {
-        g_measure_pending = false;
-        g_continuous_next_measure_ms = g_measure_start_ms + APP_RANGE_CONTINUOUS_INTERVAL_MS;
-    }
-
-    range_cycle_reset();
-}
-
-static void update_range_cycle(const RangefinderData* data, uint32_t now_ms)
-{
-    if ((data == 0) || ((data->command != 0x02U) && (data->command != 0x04U)))
-    {
-        return;
-    }
-
-    if (g_continuous_started && g_range_cycle_active &&
-        (data->target_index == 0U) && (g_range_cycle_last_index != 0U))
-    {
-        publish_range_result(now_ms);
-    }
-
-    if (!g_range_cycle_active)
-    {
-        g_range_cycle_active = true;
-        g_range_cycle_max_index = 0U;
-    }
-
-    g_range_cycle_last_rx_ms = now_ms;
-    g_range_cycle_last_index = data->target_index;
-    g_range_cycle_last_status = data->status;
-
-    if ((!data->first_valid) && (!data->last_valid))
-    {
-        return;
-    }
-
-    if (data->first_valid && (!g_range_cycle_has_first))
-    {
-        g_range_cycle_has_first = true;
-        g_range_cycle_first_mm = data->distance_mm;
-    }
-
-    if (data->last_valid &&
-        ((!g_range_cycle_has_last) || (data->target_index >= g_range_cycle_max_index)))
-    {
-        g_range_cycle_has_last = true;
-        g_range_cycle_max_index = data->target_index;
-        g_range_cycle_last_mm = data->distance_mm;
-    }
-}
-
-void AppMeasureUpdateRangeFromUart(uint32_t now_ms)
-{
-    uint8_t byte;
-    RangefinderData data;
-
-    while (BspUart_ReadByte(BSP_UART_RANGE, &byte))
-    {
-        if (g_measure_pending || g_continuous_started)
-        {
-            ++g_range_rx_bytes_since_start;
-        }
-
-        if (Rangefinder_ProcessByte(byte, &data))
-        {
-            if (g_measure_pending || g_continuous_started)
-            {
-                ++g_range_frames_since_start;
-            }
-            data.update_ms = now_ms;
-            if (data.valid && ((data.command == 0x02U) || (data.command == 0x04U)))
-            {
-                update_range_cycle(&data, now_ms);
-            }
-            else if ((!data.valid) && ((data.command == 0x02U) || (data.command == 0x04U)))
-            {
-                g_range_command_ack_received = true;
-                g_range_last_ack_command = data.command;
-            }
-            else if (!data.valid)
-            {
-                g_range_last_ack_command = data.command;
-            }
-            else if (data.valid)
-            {
-                AppState_UpdateRange(&data);
-            }
+            result.far_valid = true;
+            result.far_mm    = dist_mm;
         }
     }
 }
 
-void AppMeasureStart(AppWorkMode mode)
+void measure_set_mode(meas_mode_t new_mode)
 {
-    g_measure_mode = mode;
-    g_measure_pending = true;
-    range_cycle_reset();
-    AppState_ClearRange();
-
-    if (AppModeUsesMultifunction(mode))
-    {
-        AppImuPowerSet(true);
-        AppGnssPowerSet(true);
-    }
-    else
-    {
-        AppImuPowerSet(false);
-        AppGnssPowerSet(false);
-    }
-
-    AppRangePowerSet(true);
-
-    g_range_last_ack_command = 0U;
-    Rangefinder_SetTargetMode(RANGE_TARGET_MULTI);
-    (void)wait_range_ack(0x03U, APP_RANGE_COMMAND_ACK_TIMEOUT_MS);
-    g_measure_start_ms = AppTickMs();
-    g_range_last_ack_command = 0U;
-
-    if (mode == APP_MODE_CONTINUOUS)
-    {
-        g_continuous_started = true;
-        g_continuous_next_measure_ms = 0U;
-    }
-
-    Rangefinder_StartSingle();
+    mode  = new_mode;
+    state = ST_IDLE;
+    memset(&result, 0, sizeof(result));
+    published_flag = false;
 }
 
-void AppMeasureCloseIfDone(uint32_t now_ms)
+void measure_stop(void)
 {
-    if (g_continuous_started)
+    measure_set_mode(mode);
+}
+
+void measure_trigger(void)
+{
+    switch (mode)
     {
-        if (g_measure_pending &&
-            g_range_cycle_active &&
-            ((now_ms - g_range_cycle_last_rx_ms) >= APP_RANGE_CONTINUOUS_GAP_TIMEOUT_MS))
-        {
-            publish_range_result(now_ms);
-            return;
-        }
+    case MEAS_MODE_SINGLE:
+    case MEAS_MODE_MULTI:
+        /* 空闲启动；测量中重按 = 重新发起 */
+        round_begin();
+        break;
 
-        if (g_measure_pending &&
-            ((now_ms - g_measure_start_ms) >= APP_RANGE_CONTINUOUS_TIMEOUT_MS))
+    case MEAS_MODE_CONT:
+    case MEAS_MODE_TEST:
+        if (state == ST_IDLE)
         {
-            if (!g_range_command_ack_received)
+            round_begin(); /* 立即首轮 */
+        }
+        else
+        {
+            /* 会话中短按 = 立即停止（进行中的轮一并取消，保留已发布结果） */
+            state = ST_IDLE;
+            LOGI("range: session stopped\r\n");
+        }
+        break;
+
+    default:
+        break;
+    }
+}
+
+void measure_poll(void)
+{
+    ranger_range_t fr;
+    uint32_t       now;
+
+    ranger_poll();
+
+    /* 收集本轮回包 */
+    while (ranger_get_range(&fr))
+    {
+        if (state == ST_ROUND)
+        {
+            round_aggregate_frame(&fr);
+        }
+        /* 非轮次期间的游离帧（如残留应答）直接丢弃 */
+    }
+
+    if (state != ST_ROUND)
+    {
+        if (state == ST_SESSION_WAIT)
+        {
+            now = xTaskGetTickCount();
+            if ((int32_t)(now - next_round_tick) >= 0)
             {
-                APP_LOGW("control", "continuous range timeout, rx_bytes=%u frames=%u",
-                         (unsigned int)g_range_rx_bytes_since_start,
-                         (unsigned int)g_range_frames_since_start);
+                round_begin();
             }
-            publish_range_result(now_ms);
-            return;
-        }
-
-        if ((!g_measure_pending) &&
-            ((int32_t)(now_ms - g_continuous_next_measure_ms) >= 0))
-        {
-            g_measure_pending = true;
-            range_cycle_reset();
-            AppState_ClearRange();
-            g_measure_start_ms = now_ms;
-            g_range_last_ack_command = 0U;
-            Rangefinder_StartSingle();
         }
         return;
     }
 
-    if (!g_measure_pending)
+    now = xTaskGetTickCount();
+
+    /* 帧间静默 200ms -> 聚合发布 */
+    if (any_frame && (now - last_frame_tick) >= pdMS_TO_TICKS(APP_MEASURE_SILENCE_MS))
     {
+        /* 单目标（仅 1 帧且无后目标/编号 0）：只保留首目标 */
+        if (frame_count <= 1U && max_target_no == 0U)
+        {
+            result.far_valid = false;
+        }
+        /* 首末同值时末目标无意义 */
+        if (result.far_valid && result.near_valid && result.far_mm == result.near_mm)
+        {
+            result.far_valid = false;
+        }
+        round_publish();
         return;
     }
 
-    if (g_range_cycle_active &&
-        ((now_ms - g_range_cycle_last_rx_ms) >= APP_RANGE_SINGLE_GAP_TIMEOUT_MS))
+    /* 单轮 3s 超时：发布无目标 */
+    if ((now - round_start_tick) >= pdMS_TO_TICKS(APP_MEASURE_TIMEOUT_MS))
     {
-        publish_range_result(now_ms);
-        AppFinishMeasurementPower();
+        LOGI("range: timeout, frames=%u\r\n", (unsigned int)frame_count);
+        result.near_valid = false;
+        result.far_valid  = false;
+        round_publish();
     }
-    else
-    {
-        const uint32_t timeout_ms = AppModeUsesMultifunction(g_measure_mode) ?
-            APP_MULTI_MEASURE_TIMEOUT_MS : APP_RANGE_SINGLE_TIMEOUT_MS;
+}
 
-        if ((now_ms - g_measure_start_ms) >= timeout_ms)
-        {
-            const AppWorkMode finished_mode = g_measure_mode;
+bool measure_is_running(void)
+{
+    return state != ST_IDLE;
+}
 
-            if (!g_range_command_ack_received)
-            {
-                APP_LOGW("control", "%s range timeout, rx_bytes=%u frames=%u",
-                         AppModeUsesMultifunction(finished_mode) ? "multi" : "single",
-                         (unsigned int)g_range_rx_bytes_since_start,
-                         (unsigned int)g_range_frames_since_start);
-            }
-            publish_range_result(now_ms);
-            AppFinishMeasurementPower();
-        }
-    }
+bool measure_round_active(void)
+{
+    return state == ST_ROUND;
+}
+
+const measure_result_t* measure_get_result(void)
+{
+    return &result;
+}
+
+bool measure_take_published(void)
+{
+    bool f          = published_flag;
+    published_flag  = false;
+    return f;
 }

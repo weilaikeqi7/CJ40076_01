@@ -1,9 +1,10 @@
 #include "main.h"
 
-#include "app_debug.h"
-#include "app_log.h"
-#include "app_tasks.h"
+#include "app.h"
 #include "board.h"
+#include "rtt_log.h"
+
+#include "FreeRTOS.h"
 #include "task.h"
 
 #include <stdint.h>
@@ -31,20 +32,23 @@ static void freertos_heap_region_init(void)
 
 int main(void)
 {
-    BaseType_t tasks_created;
+    BaseType_t created;
 
-    Board_Init();
+    /* 最先初始化 GPIO 并保持电源（含电源保持脚置高） */
+    board_gpio_init();
     freertos_heap_region_init();
-    AppDebug_Init();
-    tasks_created = AppTasks_Start();
-    if (tasks_created != pdPASS)
+    rtt_log_init();
+
+    created = xTaskCreate(app_run, "APP", configMINIMAL_STACK_SIZE * 4U, NULL,
+                          tskIDLE_PRIORITY + 1U, NULL);
+    if (created != pdPASS)
     {
-        APP_LOGE("main", "failed to create app tasks");
+        LOGI("main: failed to create app task\r\n");
         Error_Handler();
     }
 
     vTaskStartScheduler();
-    APP_LOGE("main", "scheduler returned");
+    LOGI("main: scheduler returned\r\n");
     Error_Handler();
 }
 
@@ -58,20 +62,25 @@ void Error_Handler(void)
 
 void AppAssertFailed(const char* file, int line)
 {
-    AppDebug_AssertFailed(file, line);
+    LOGI("rtos: assert failed %s:%d\r\n", file, (int)line);
     Error_Handler();
 }
 
 void vApplicationMallocFailedHook(void)
 {
-    APP_LOGE("rtos", "malloc failed");
+    LOGI("rtos: malloc failed\r\n");
     Error_Handler();
+}
+
+void vApplicationIdleHook(void)
+{
+    /* 低功耗策略后续可在此进入 sleep；当前空转 */
 }
 
 void vApplicationStackOverflowHook(TaskHandle_t task, char* task_name)
 {
     (void)task;
-    APP_LOGE("rtos", "stack overflow: %s", (task_name != NULL) ? task_name : "-");
+    LOGI("rtos: stack overflow: %s\r\n", (task_name != NULL) ? task_name : "-");
     Error_Handler();
 }
 

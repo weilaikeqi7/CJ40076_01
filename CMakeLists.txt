@@ -33,9 +33,6 @@ set(CMSIS_DEVICE_DIR "${SDK_ROOT}/firmware/CMSIS/device")
 set(STDPERIPH_DIR "${SDK_ROOT}/firmware/${N32_TARGET}_std_periph_driver")
 set(STARTUP_FILE "${CMSIS_DEVICE_DIR}/startup/startup_${N32_TARGET}_gcc.s")
 set(FREERTOS_KERNEL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/vendor/FreeRTOS-Kernel")
-set(SEGGER_RTT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/vendor/RTT-8.58.0")
-set(CMBACKTRACE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/vendor/CmBacktrace-1.5.0")
-
 foreach(required_path IN ITEMS
         "${CMSIS_CORE_DIR}"
         "${CMSIS_DEVICE_DIR}"
@@ -43,10 +40,7 @@ foreach(required_path IN ITEMS
         "${STDPERIPH_DIR}/src"
         "${STARTUP_FILE}"
         "${FREERTOS_KERNEL_DIR}/include"
-        "${FREERTOS_KERNEL_DIR}/portable/GCC/ARM_CM4F"
-        "${SEGGER_RTT_DIR}/RTT"
-        "${SEGGER_RTT_DIR}/Config"
-        "${CMBACKTRACE_DIR}/cm_backtrace")
+        "${FREERTOS_KERNEL_DIR}/portable/GCC/ARM_CM4F")
     if(NOT EXISTS "${required_path}")
         message(FATAL_ERROR "Missing SDK path: ${required_path}")
     endif()
@@ -72,31 +66,24 @@ file(GLOB STDPERIPH_SOURCES CONFIGURE_DEPENDS
 set(PROJECT_SOURCES
     src/main.c
     "${BUILD_INFO_HEADER}"
-    src/app/app_debug.c
-    src/app/app_log.c
-    src/app/app_runtime_stats.c
-    src/app/app_state.c
-    src/app/app_calibration.c
-    src/app/app_control.c
+    src/app/app.c
+    src/app/app_attitude.c
+    src/app/app_calib.c
+    src/app/app_coord.c
     src/app/app_display.c
-    src/app/app_io.c
+    src/app/app_key.c
     src/app/app_measure.c
-    src/app/app_runtime.c
-    src/app/app_tasks.c
-    src/app/measure_counter.c
-    src/app/module_selftest.c
-    src/app/power_manager.c
-    src/bsp/board.c
-    src/bsp/bsp_adc.c
-    src/bsp/bsp_gpio.c
-    src/bsp/bsp_uart.c
-    src/drivers/battery.c
-    src/drivers/cs1622.c
-    src/drivers/keys.c
-    src/drivers/lcd_segments.c
-    src/modules/bv220.c
-    src/modules/jy901b.c
-    src/modules/rangefinder.c
+    src/app/app_runtime_stats.c
+    src/app/app_store.c
+    src/board/board.c
+    src/board/board_adc.c
+    src/board/board_uart.c
+    src/device/cs1622.c
+    src/device/gnss.c
+    src/device/jy901b.c
+    src/device/lcd_segments.c
+    src/device/ranger.c
+    src/common/rtt_log.c
     src/n32l40x_it.c
     src/syscalls.c
     src/freertos_heap.c
@@ -110,10 +97,6 @@ set(PROJECT_SOURCES
     "${FREERTOS_KERNEL_DIR}/stream_buffer.c"
     "${FREERTOS_KERNEL_DIR}/portable/GCC/ARM_CM4F/port.c"
     "${FREERTOS_KERNEL_DIR}/portable/MemMang/heap_4.c"
-    "${SEGGER_RTT_DIR}/RTT/SEGGER_RTT.c"
-    "${SEGGER_RTT_DIR}/RTT/SEGGER_RTT_printf.c"
-    "${CMBACKTRACE_DIR}/cm_backtrace/cm_backtrace.c"
-    "${CMBACKTRACE_DIR}/cm_backtrace/fault_handler/gcc/cmb_fault.S"
     ${STDPERIPH_SOURCES}
 )
 
@@ -138,8 +121,6 @@ endif()
 target_compile_definitions(${APP_TARGET} PRIVATE
     N32L40X
     USE_STDPERIPH_DRIVER
-    CMB_USER_CFG
-    APP_USE_CMB_FAULT_HANDLER=1
     $<$<CONFIG:Debug>:APP_DEBUG_BUILD=1>
     $<$<BOOL:${N32_USE_FPU}>:N32_EXPECT_FPU=1>
 )
@@ -148,17 +129,14 @@ target_include_directories(${APP_TARGET} PRIVATE
     "${CMAKE_CURRENT_BINARY_DIR}/generated"
     inc
     inc/app
-    inc/bsp
-    inc/drivers
-    inc/modules
+    inc/board
+    inc/device
+    inc/common
     "${CMSIS_CORE_DIR}"
     "${CMSIS_DEVICE_DIR}"
     "${STDPERIPH_DIR}/inc"
     "${FREERTOS_KERNEL_DIR}/include"
     "${FREERTOS_KERNEL_DIR}/portable/GCC/ARM_CM4F"
-    "${SEGGER_RTT_DIR}/RTT"
-    "${SEGGER_RTT_DIR}/Config"
-    "${CMBACKTRACE_DIR}/cm_backtrace"
 )
 
 target_compile_options(${APP_TARGET} PRIVATE
