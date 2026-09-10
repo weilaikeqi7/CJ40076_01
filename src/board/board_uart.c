@@ -3,7 +3,7 @@
  * @brief 板载串口驱动实现（与 03 相同结构：RXDNE 中断环形缓冲，TX 轮询阻塞）
  *
  * N32L40x 复用功能（board_config 原理图值）：
- *   USART1 TX=AF1 RX=AF4；USART2 TX/RX=AF4；UART4 TX/RX=AF6；UART5 TX=AF6 RX=AF7
+ *   USART1 TX=AF1 RX=AF4；USART2 TX/RX=AF4；UART4 TX/RX=AF6
  */
 #include "board_uart.h"
 
@@ -11,6 +11,7 @@
 #include "misc.h"
 #include "n32l40x_rcc.h"
 #include "n32l40x_usart.h"
+#include "rtt_log.h"
 
 #define UART_RX_BUF_SIZE 256U
 
@@ -63,17 +64,6 @@ static uart_dev_t uart_devs[BOARD_UART_NUM] = {
             .rx_af   = GPIO_AF6_UART4,
             .irqn    = UART4_IRQn,
         },
-    [BOARD_UART_HOST] =
-        {
-            .usart   = UART5,
-            .tx_port = GPIOB,
-            .tx_pin  = GPIO_PIN_4,
-            .tx_af   = GPIO_AF6_UART5,
-            .rx_port = GPIOB,
-            .rx_pin  = GPIO_PIN_5,
-            .rx_af   = GPIO_AF7_UART5,
-            .irqn    = UART5_IRQn,
-        },
 };
 
 static void usart_rcc_enable(board_uart_t port)
@@ -90,9 +80,7 @@ static void usart_rcc_enable(board_uart_t port)
     case BOARD_UART_RANGER:
         RCC_EnableAPB2PeriphClk(RCC_APB2_PERIPH_GPIOB | RCC_APB2_PERIPH_UART4, ENABLE);
         break;
-    case BOARD_UART_HOST:
     default:
-        RCC_EnableAPB2PeriphClk(RCC_APB2_PERIPH_GPIOB | RCC_APB2_PERIPH_UART5, ENABLE);
         break;
     }
 }
@@ -152,6 +140,10 @@ void board_uart_putc(board_uart_t port, uint8_t byte)
     {
     }
     USART_SendData(usart, byte);
+    if (port == BOARD_UART_RANGER)
+    {
+        LOGI("send: port=%d byte=0x%02X\r\n", (int)port, (int)byte);
+    }
 }
 
 void board_uart_write(board_uart_t port, const void* data, size_t len)
@@ -195,7 +187,10 @@ static void uart_rx_isr(board_uart_t port)
     uart_dev_t* dev  = &uart_devs[port];
     uint16_t    next = (uint16_t)((dev->rx_head + 1U) % UART_RX_BUF_SIZE);
     uint8_t     byte = (uint8_t)USART_ReceiveData(dev->usart);
-
+    if (port == BOARD_UART_RANGER)
+    {
+        LOGI("recv: port=%d byte=0x%02X\r\n", (int)port, (int)byte);
+    }
     if (next != dev->rx_tail)
     {
         dev->rx_buf[dev->rx_head] = byte;
@@ -225,13 +220,5 @@ void UART4_IRQHandler(void)
     if (USART_GetIntStatus(UART4, USART_INT_RXDNE) != RESET)
     {
         uart_rx_isr(BOARD_UART_RANGER);
-    }
-}
-
-void UART5_IRQHandler(void)
-{
-    if (USART_GetIntStatus(UART5, USART_INT_RXDNE) != RESET)
-    {
-        uart_rx_isr(BOARD_UART_HOST);
     }
 }

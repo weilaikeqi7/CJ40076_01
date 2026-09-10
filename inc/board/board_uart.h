@@ -1,6 +1,6 @@
 /**
  * @file board_uart.h
- * @brief 板载串口驱动：GNSS(USART1) / JY901B(USART2) / 测距机(UART4) / 调试(UART5)
+ * @brief 板载串口驱动：GNSS(USART1) / JY901B(USART2) / 测距机(UART4)
  *        （与 03 相同 API：中断环形接收缓冲 + 阻塞发送）
  */
 #ifndef BOARD_UART_H
@@ -18,7 +18,6 @@ typedef enum
     BOARD_UART_GNSS = 0, /* USART1 PA4/PA5，115200 */
     BOARD_UART_JY901B,   /* USART2 PA2/PA3，9600 */
     BOARD_UART_RANGER,   /* UART4  PB0/PB1，115200 */
-    BOARD_UART_HOST,     /* UART5  PB4/PB5，115200（调试预留） */
     BOARD_UART_NUM
 } board_uart_t;
 

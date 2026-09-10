@@ -16,7 +16,7 @@
  *   PA15 - LCD CS1622 /CS
  *   PB0/PB1  - UART4 TX/RX -> 测距机（115200）
  *   PB3  - LCD CS1622 /RD
- *   PB4/PB5  - UART5 TX/RX -> 调试串口（预留）
+ *   PB4/PB5  - 未用（原 UART5 调试串口已删除）
  *   PB6  - LCD CS1622 /WR
  *   PB7  - LCD CS1622 DATA
  *

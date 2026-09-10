@@ -210,14 +210,14 @@ static void draw_elevation(float altitude_m, bool valid)
     LcdSegments_SetNumberRightAligned(digits_elev, 4U, elev);
 }
 
-/** 电池 4 段（框 + 4 格条，格条数 = level） */
+/** 电池 4 段（框 + 4 格条，从左到右掉电：level 档亮最右 level 格） */
 static void draw_battery(uint8_t level)
 {
     LcdSegments_SetSymbol(LCD_SYMBOL_BATTERY_FRAME, true);
-    LcdSegments_SetSymbol(LCD_SYMBOL_BATTERY_1, level >= 1U);
-    LcdSegments_SetSymbol(LCD_SYMBOL_BATTERY_2, level >= 2U);
-    LcdSegments_SetSymbol(LCD_SYMBOL_BATTERY_3, level >= 3U);
-    LcdSegments_SetSymbol(LCD_SYMBOL_BATTERY_4, level >= 4U);
+    LcdSegments_SetSymbol(LCD_SYMBOL_BATTERY_1, level >= 4U);
+    LcdSegments_SetSymbol(LCD_SYMBOL_BATTERY_2, level >= 3U);
+    LcdSegments_SetSymbol(LCD_SYMBOL_BATTERY_3, level >= 2U);
+    LcdSegments_SetSymbol(LCD_SYMBOL_BATTERY_4, level >= 1U);
 }
 
 void display_init(void)

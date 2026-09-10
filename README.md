@@ -36,7 +36,7 @@ vendor/                     N32L40x 标准库 2.2.0 + FreeRTOS-Kernel
 | 测距机 | UART4 PB0/PB1 + PA7 电源 | 115200，常供电 |
 | JY901B | USART2 PA2/PA3 + PA8 电源 | 9600，按需供电 |
 | GNSS | USART1 PA4/PA5 + PA12 电源 | 115200，按需供电 |
-| 调试串口 | UART5 PB4/PB5 | 115200（预留，环形缓冲同一套驱动） |
+| PB4/PB5 | 未用 | 原 UART5 调试串口已删除 |
 | LCD | PA15=CS PB3=RD PB6=WR PB7=DATA PA11=IRQ | CS1622，常供电 |
 
 ## 与 03 的硬件差异
