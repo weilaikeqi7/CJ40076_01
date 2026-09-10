@@ -11,7 +11,6 @@
 #include "misc.h"
 #include "n32l40x_rcc.h"
 #include "n32l40x_usart.h"
-#include "rtt_log.h"
 
 #define UART_RX_BUF_SIZE 256U
 
@@ -140,10 +139,6 @@ void board_uart_putc(board_uart_t port, uint8_t byte)
     {
     }
     USART_SendData(usart, byte);
-    if (port == BOARD_UART_RANGER)
-    {
-        LOGI("send: port=%d byte=0x%02X\r\n", (int)port, (int)byte);
-    }
 }
 
 void board_uart_write(board_uart_t port, const void* data, size_t len)
@@ -187,10 +182,7 @@ static void uart_rx_isr(board_uart_t port)
     uart_dev_t* dev  = &uart_devs[port];
     uint16_t    next = (uint16_t)((dev->rx_head + 1U) % UART_RX_BUF_SIZE);
     uint8_t     byte = (uint8_t)USART_ReceiveData(dev->usart);
-    if (port == BOARD_UART_RANGER)
-    {
-        LOGI("recv: port=%d byte=0x%02X\r\n", (int)port, (int)byte);
-    }
+
     if (next != dev->rx_tail)
     {
         dev->rx_buf[dev->rx_head] = byte;
