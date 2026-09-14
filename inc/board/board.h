@@ -44,9 +44,11 @@ extern "C" {
 #define BOARD_PWR_RANGER_PORT GPIOA
 #define BOARD_PWR_RANGER_PIN  GPIO_PIN_7
 
-/* JY901B 电源开关，高有效 */
-#define BOARD_PWR_JY901B_PORT GPIOA
-#define BOARD_PWR_JY901B_PIN  GPIO_PIN_8
+/* 电子罗盘（MCP-406）电源开关，高有效 */
+#define BOARD_PWR_COMPASS_PORT GPIOA
+#define BOARD_PWR_COMPASS_PIN  GPIO_PIN_8
+#define BOARD_PWR_JY901B_PORT  BOARD_PWR_COMPASS_PORT
+#define BOARD_PWR_JY901B_PIN   BOARD_PWR_COMPASS_PIN
 
 /* GNSS 电源开关，高有效 */
 #define BOARD_PWR_GNSS_PORT GPIOA
@@ -91,9 +93,11 @@ void board_power_hold(bool on);
  */
 void board_gpio_init(void);
 
-void board_ranger_power(bool on); /* 测距机电源 */
-void board_jy901b_power(bool on); /* JY901B 电源 */
-void board_gnss_power(bool on);   /* GNSS 电源 */
+void board_ranger_power(bool on);  /* 测距机电源 */
+void board_compass_power(bool on); /* 电子罗盘电源 */
+void board_gnss_power(bool on);    /* GNSS 电源 */
+
+#define board_jy901b_power board_compass_power
 
 bool board_key_mode_pressed(void);  /* 模式键按下返回 true（低有效） */
 bool board_key_power_pressed(void); /* 电源键按下返回 true（低有效） */

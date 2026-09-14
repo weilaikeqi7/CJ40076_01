@@ -33,6 +33,8 @@ typedef enum
     DISP_PAGE_PIT,
     DISP_PAGE_HIT,
     DISP_PAGE_HER,
+    DISP_PAGE_MAG_CAL,  /* 磁场校准中：显示已采点数与总点数 */
+    DISP_PAGE_MAG_DONE, /* 磁场校准采点完成：显示校准得分 */
     DISP_PAGE_FULL_ON,
 } disp_page_t;
 
@@ -59,6 +61,11 @@ typedef struct
 
     disp_page_t page;
     int16_t     page_value_c01;
+
+    /* 磁场校准显示参数 */
+    uint16_t cal_cur_points;   /* 当前已校准点数 */
+    uint16_t cal_total_points; /* 校准总点数（54） */
+    float    cal_mag_score;    /* 校准得分 */
 } disp_state_t;
 
 void display_init(void);

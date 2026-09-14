@@ -5,7 +5,7 @@
 #include "app_attitude.h"
 
 #include "app_config.h"
-#include "jy901b.h"
+#include "mcp406.h"
 
 #include "FreeRTOS.h"
 #include "task.h"
@@ -22,19 +22,19 @@ static uint32_t last_frame_tick;
 
 void attitude_update(void)
 {
-    const jy901b_data_t* imu = jy901b_get_data();
+    const mcp406_data_t* compass = mcp406_get_data();
     int32_t              h;
 
-    jy901b_poll();
+    mcp406_poll();
 
-    if (imu->tick_angle == 0U || imu->tick_angle == last_frame_tick)
+    if (compass->tick_angle == 0U || compass->tick_angle == last_frame_tick)
     {
         return;
     }
-    last_frame_tick = imu->tick_angle;
+    last_frame_tick = compass->tick_angle;
 
-    /* 俯仰 = -原始俯仰 + PIt，截断到 ±90° */
-    pitch_c01 = -(int32_t)(imu->pitch * 100.0f) + offsets.pit_c01;
+    /* 俯仰 = 原始俯仰 + PIt，截断到 ±90°（抬头为正、低头为负） */
+    pitch_c01 = (int32_t)(compass->pitch * 100.0f) + offsets.pit_c01;
     if (pitch_c01 > 9000)
     {
         pitch_c01 = 9000;
@@ -44,8 +44,8 @@ void attitude_update(void)
         pitch_c01 = -9000;
     }
 
-    /* 航向 = -原始航向 + HIt + HEr，限制到 0.00°~359.99° */
-    h = -(int32_t)(imu->yaw * 100.0f) + offsets.hit_c01 + offsets.her_c01;
+    /* 航向 = 原始航向 + HIt + HEr，限制到 0.00°~359.99°（北为0°，顺时针为正） */
+    h = (int32_t)(compass->heading * 100.0f) + offsets.hit_c01 + offsets.her_c01;
     h %= APP_HEADING_PERIOD_C01;
     if (h < 0)
     {

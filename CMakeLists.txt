@@ -28,6 +28,8 @@ set(N32_HEAP_SIZE "0x200" CACHE STRING "Heap size")
 option(N32_USE_FPU "Build for Cortex-M4F single precision FPU" ON)
 set(N32_FLOAT_ABI "hard" CACHE STRING "GCC float ABI: hard, softfp, or soft")
 
+option(ENABLE_PRINTF_FLOAT "Enable printf/vsnprintf float formatting in newlib-nano" ON)
+
 set(CMSIS_CORE_DIR "${SDK_ROOT}/firmware/CMSIS/core")
 set(CMSIS_DEVICE_DIR "${SDK_ROOT}/firmware/CMSIS/device")
 set(STDPERIPH_DIR "${SDK_ROOT}/firmware/${N32_TARGET}_std_periph_driver")
@@ -80,7 +82,7 @@ set(PROJECT_SOURCES
     src/board/board_uart.c
     src/device/cs1622.c
     src/device/gnss.c
-    src/device/jy901b.c
+    src/device/mcp406.c
     src/device/lcd_segments.c
     src/device/ranger.c
     src/common/rtt_log.c
@@ -164,6 +166,7 @@ target_link_options(${APP_TARGET} PRIVATE
     -Wl,--no-warn-rwx-segments
     --specs=nano.specs
     --specs=nosys.specs
+    $<$<BOOL:${ENABLE_PRINTF_FLOAT}>:-Wl,-u,_printf_float>
 )
 
 target_link_libraries(${APP_TARGET} PRIVATE

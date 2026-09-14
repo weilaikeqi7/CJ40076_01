@@ -15,11 +15,13 @@ extern "C" {
 
 typedef enum
 {
-    BOARD_UART_GNSS = 0, /* USART1 PA4/PA5，115200 */
-    BOARD_UART_JY901B,   /* USART2 PA2/PA3，9600 */
-    BOARD_UART_RANGER,   /* UART4  PB0/PB1，115200 */
+    BOARD_UART_GNSS = 0,   /* USART1 PA4/PA5，115200 */
+    BOARD_UART_COMPASS,    /* USART2 PA2/PA3，38400 (MCP-406) */
+    BOARD_UART_RANGER,     /* UART4  PB0/PB1，115200 */
     BOARD_UART_NUM
 } board_uart_t;
+
+#define BOARD_UART_JY901B BOARD_UART_COMPASS
 
 void board_uart_init(board_uart_t port, uint32_t baud);
 void board_uart_write(board_uart_t port, const void* data, size_t len);

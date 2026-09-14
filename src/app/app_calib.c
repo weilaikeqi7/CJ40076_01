@@ -8,8 +8,8 @@
 #include "app_config.h"
 #include "board.h"
 #include "board_uart.h"
-#include "jy901b.h"
 #include "lcd_segments.h"
+#include "mcp406.h"
 #include "rtt_log.h"
 
 #include "FreeRTOS.h"
@@ -18,12 +18,12 @@
 static calib_state_t state = CALIB_NONE;
 static app_offsets_t work; /* 页内编辑中的补偿值（实时生效，保存才落 Flash） */
 
-/** 进入校准前确保 JY901B 已上电并等待启动（单次/连续模式下它可能断电） */
+/** 进入校准前确保电子罗盘已上电并等待启动（单次/连续模式下它可能断电） */
 static void ensure_imu_on(void)
 {
-    board_jy901b_power(true);
+    board_compass_power(true);
     vTaskDelay(pdMS_TO_TICKS(300U));
-    board_uart_flush_rx(BOARD_UART_JY901B);
+    board_uart_flush_rx(BOARD_UART_COMPASS);
 }
 
 static int16_t* page_ptr(void)
@@ -102,15 +102,14 @@ bool calib_handle_key(const app_key_event_t* evt)
                 ensure_imu_on();
                 page_enter(CALIB_HER);
                 return true;
-            case 5: /* 五击：磁场校准开始 */
+            case 5: /* 五击：磁场校准开始（空中8字运动，自动采样） */
                 ensure_imu_on();
                 state = CALIB_MAG;
-                LcdSegments_SetAll(true); /* 校准期间 LCD 全显 */
-                LcdSegments_Flush();
-                jy901b_calib_mag_start();
-                LOGI("calib: mag calibration started\r\n");
+                app_key_set_calib_mode(true);
+                mcp406_calib_mag_start();
+                LOGI("calib: mag calibration started (auto figure-8)\r\n");
                 return true;
-            case 6: /* 六击：仅磁场校准中有效（此处 NONE 态忽略） */
+            case 6: /* 六击：已由采满自动结束代替，此处忽略 */
                 return true;
             case 7: /* 七击：PIt */
                 ensure_imu_on();
@@ -121,7 +120,7 @@ bool calib_handle_key(const app_key_event_t* evt)
                 state = CALIB_ACC_BUSY;
                 LcdSegments_SetAll(true);
                 LcdSegments_Flush();
-                jy901b_calib_accel();
+                mcp406_calib_accel();
                 state = CALIB_NONE;
                 LOGI("calib: accel calibration done\r\n");
                 return true;
@@ -130,16 +129,16 @@ bool calib_handle_key(const app_key_event_t* evt)
                 state = CALIB_ANG_BUSY;
                 LcdSegments_SetAll(true);
                 LcdSegments_Flush();
-                jy901b_set_angle_ref();
+                mcp406_set_angle_ref();
                 state = CALIB_NONE;
                 LOGI("calib: angle reference done\r\n");
                 return true;
-            case 10: /* 十击：JY901B 恢复出厂设置（先全显再阻塞） */
+            case 10: /* 十击：MCP-406 恢复出厂设置（先全显再阻塞） */
                 ensure_imu_on();
                 state = CALIB_ANG_BUSY;
                 LcdSegments_SetAll(true);
                 LcdSegments_Flush();
-                jy901b_factory_reset();
+                mcp406_factory_reset();
                 state = CALIB_NONE;
                 LOGI("calib: factory reset done\r\n");
                 return true;
@@ -150,16 +149,28 @@ bool calib_handle_key(const app_key_event_t* evt)
         return false;
     }
 
-    /* ---------- 磁场校准中：六击结束 ---------- */
-    if (state == CALIB_MAG)
+    /* ---------- 磁场校准进行中或采满完成状态 ---------- */
+    if (state == CALIB_MAG || state == CALIB_MAG_DONE)
     {
-        if ((evt->evt & APP_KEY_EVT_MODE_CLICKS) != 0U && evt->arg == 6U)
+        /* 自动检测是否采满并收到罗盘返回的 CalScore */
+        if (state == CALIB_MAG && mcp406_is_cal_done())
         {
-            jy901b_calib_mag_end();
-            state = CALIB_NONE;
-            LOGI("calib: mag calibration stopped, save command sent\r\n");
+            state = CALIB_MAG_DONE;
+            LOGI("calib: mag samples full, cal score=%.3f, waiting both-long 1s to save\r\n",
+                 mcp406_get_cal_mag_score());
         }
-        return true; /* 校准中吞掉所有按键（长按关机除外，app 层先判） */
+
+        /* 同时长按电源键和模式键 1s：保存参数并退出校准 */
+        if ((evt->evt & APP_KEY_EVT_BOTH_LONG) != 0U)
+        {
+            mcp406_save();
+            state = CALIB_NONE;
+            app_key_set_calib_mode(false);
+            LOGI("calib: both keys 1s pressed -> saved and exited mag calib\r\n");
+            return true;
+        }
+
+        return true; /* 校准中消费所有按键（长按关机由 app 层先判） */
     }
 
     /* ---------- 设置页（PIt/HIt/HEr） ---------- */
@@ -208,7 +219,23 @@ int16_t calib_page_value_c01(void)
 
 bool calib_mag_in_progress(void)
 {
-    return state == CALIB_MAG;
+    return state == CALIB_MAG || state == CALIB_MAG_DONE;
+}
+
+bool calib_mag_is_done(void)
+{
+    return state == CALIB_MAG_DONE;
+}
+
+void calib_mag_abort(void)
+{
+    if (state == CALIB_MAG || state == CALIB_MAG_DONE)
+    {
+        mcp406_abort_cal();
+        state = CALIB_NONE;
+        app_key_set_calib_mode(false);
+        LOGI("calib: mag calib aborted\r\n");
+    }
 }
 
 bool calib_page_active(void)

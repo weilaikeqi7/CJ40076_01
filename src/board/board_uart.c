@@ -41,7 +41,7 @@ static uart_dev_t uart_devs[BOARD_UART_NUM] = {
             .rx_af   = GPIO_AF4_USART1,
             .irqn    = USART1_IRQn,
         },
-    [BOARD_UART_JY901B] =
+    [BOARD_UART_COMPASS] =
         {
             .usart   = USART2,
             .tx_port = GPIOA,
@@ -72,7 +72,7 @@ static void usart_rcc_enable(board_uart_t port)
     case BOARD_UART_GNSS:
         RCC_EnableAPB2PeriphClk(RCC_APB2_PERIPH_GPIOA | RCC_APB2_PERIPH_USART1, ENABLE);
         break;
-    case BOARD_UART_JY901B:
+    case BOARD_UART_COMPASS:
         RCC_EnableAPB2PeriphClk(RCC_APB2_PERIPH_GPIOA, ENABLE);
         RCC_EnableAPB1PeriphClk(RCC_APB1_PERIPH_USART2, ENABLE);
         break;

@@ -10,7 +10,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#define RTT_UP_BUF_SIZE 512U
+#define RTT_UP_BUF_SIZE 4096U
 
 typedef struct
 {

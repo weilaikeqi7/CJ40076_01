@@ -258,7 +258,46 @@ void display_render(const disp_state_t* s)
 
     LcdSegments_ClearBuffer();
 
-    /* ---------------- 校准页（PIt/HIt/HEr） ---------------- */
+    /* ---------------- 磁场校准进行中：显示已校准点数 / 总点数 ---------------- */
+    if (s->page == DISP_PAGE_MAG_CAL)
+    {
+        /* 航向区（3位）：当前已校准点数 */
+        LcdSegments_SetNumberRightAligned(digits_heading, 3U, (uint32_t)s->cal_cur_points);
+
+        /* 距离区（4位）：校准总点数（54） */
+        LcdSegments_SetNumberRightAligned(digits_distance, 4U, (uint32_t)s->cal_total_points);
+
+        draw_battery(s->batt_level);
+        LcdSegments_Flush();
+        return;
+    }
+
+    /* ---------------- 磁场校准完成：显示校准得分 ---------------- */
+    if (s->page == DISP_PAGE_MAG_DONE)
+    {
+        uint32_t disp_score;
+
+        /* 得分显示在距离区：
+         * 小于 10.0 的正常得分放大 100 倍以整数显示（如 0.18 显示 18）；
+         * 大于 10.0 的异常分值（如 200 未校准/400 失败）直接显示整数 */
+        if (s->cal_mag_score < 10.0f)
+        {
+            disp_score = (uint32_t)(s->cal_mag_score * 100.0f + 0.5f);
+        }
+        else
+        {
+            disp_score = (uint32_t)(s->cal_mag_score + 0.5f);
+        }
+
+        LcdSegments_SetNumberRightAligned(digits_distance, 4U, disp_score);
+        LcdSegments_SetNumberRightAligned(digits_heading, 3U, (uint32_t)s->cal_total_points);
+
+        draw_battery(s->batt_level);
+        LcdSegments_Flush();
+        return;
+    }
+
+    /* ---------------- 补偿设置页（PIt/HIt/HEr） ---------------- */
     if (s->page != DISP_PAGE_NONE)
     {
         /* 补偿值显示在高程区（绝对值，0.1° 单位整数显示——玻璃无小数段） */

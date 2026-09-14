@@ -16,7 +16,7 @@
 #include "board_adc.h"
 #include "board_uart.h"
 #include "gnss.h"
-#include "jy901b.h"
+#include "mcp406.h"
 #include "ranger.h"
 #include "rtt_log.h"
 
@@ -70,13 +70,14 @@ static void power_apply(void)
 
     if (need_imu != imu_on)
     {
-        board_jy901b_power(need_imu);
+        board_compass_power(need_imu);
         imu_on = need_imu;
         if (need_imu)
         {
-            /* 重新上电后等待模块启动（配置存在模块内部 Flash，重上电不用重新配置） */
+            /* 重新上电后等待模块启动，确保连续广播 */
             vTaskDelay(pdMS_TO_TICKS(300U));
-            board_uart_flush_rx(BOARD_UART_JY901B);
+            board_uart_flush_rx(BOARD_UART_COMPASS);
+            mcp406_start_continuous();
         }
     }
 
@@ -96,9 +97,10 @@ static void power_apply(void)
 
 static void shutdown_proc(void)
 {
-    /* 磁场校准中长按关机 = 放弃本轮（不发送结束命令） */
+    /* 磁场校准中长按关机 = 放弃本轮（发送停止校准） */
     if (calib_mag_in_progress())
     {
+        calib_mag_abort();
         LOGI("calib: mag calibration aborted by power off\r\n");
     }
 
@@ -106,7 +108,7 @@ static void shutdown_proc(void)
     (void)store_save_count(); /* 正常关机与欠压关机均保存计数 */
 
     board_ranger_power(false);
-    board_jy901b_power(false);
+    board_compass_power(false);
     board_gnss_power(false);
 
     board_power_hold(false); /* 切断整机电源 */
@@ -263,8 +265,8 @@ static void startup_self_check(void)
 {
     uint32_t start = xTaskGetTickCount();
 
-    /* JY901B：上电 + 配置（5Hz、仅角度帧、垂直安装） */
-    jy901b_init(JY901B_RATE_5HZ, (uint16_t)JY901B_RSW_ANGLE);
+    /* MCP-406：上电 + 初始化配置（38400波特率、标准0°、连续广播10Hz） */
+    mcp406_init();
     imu_on = true;
 
     /* 角度帧自检：3s 内等到第一帧 */
@@ -273,12 +275,12 @@ static void startup_self_check(void)
         attitude_update();
         if (attitude_valid())
         {
-            LOGI("sys: JY901B angle frame self-check OK\r\n");
+            LOGI("sys: MCP-406 compass angle frame self-check OK\r\n");
             return;
         }
         vTaskDelay(pdMS_TO_TICKS(20U));
     }
-    LOGI("sys: JY901B self-check FAILED (no angle frame)\r\n");
+    LOGI("sys: MCP-406 self-check FAILED (no angle frame)\r\n");
 }
 
 /* ------------------------------ 主任务 ------------------------------ */
@@ -300,7 +302,7 @@ void app_run(void* argument)
     ranger_init();        /* 测距机常供电（含 1.6s 预热） */
     gnss_init();          /* 初始化 USART1 后先断电（按需供电） */
     board_gnss_power(false);
-    startup_self_check(); /* JY901B 配置 + 角度帧自检 */
+    startup_self_check(); /* MCP-406 配置 + 角度帧自检 */
 
     app_key_init();
 
@@ -371,6 +373,16 @@ void app_run(void* argument)
                 disp.page = DISP_PAGE_HER;
                 break;
             case CALIB_MAG:
+                disp.page             = DISP_PAGE_MAG_CAL;
+                disp.cal_cur_points   = (uint16_t)mcp406_get_cal_samples();
+                disp.cal_total_points = MCP406_CAL_TOTAL_POINTS;
+                break;
+            case CALIB_MAG_DONE:
+                disp.page             = DISP_PAGE_MAG_DONE;
+                disp.cal_cur_points   = MCP406_CAL_TOTAL_POINTS;
+                disp.cal_total_points = MCP406_CAL_TOTAL_POINTS;
+                disp.cal_mag_score    = mcp406_get_cal_mag_score();
+                break;
             case CALIB_ACC_BUSY:
             case CALIB_ANG_BUSY:
                 disp.page = DISP_PAGE_FULL_ON;

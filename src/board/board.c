@@ -96,9 +96,9 @@ void board_ranger_power(bool on)
     write_pin(BOARD_PWR_RANGER_PORT, BOARD_PWR_RANGER_PIN, on);
 }
 
-void board_jy901b_power(bool on)
+void board_compass_power(bool on)
 {
-    write_pin(BOARD_PWR_JY901B_PORT, BOARD_PWR_JY901B_PIN, on);
+    write_pin(BOARD_PWR_COMPASS_PORT, BOARD_PWR_COMPASS_PIN, on);
 }
 
 void board_gnss_power(bool on)
