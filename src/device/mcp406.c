@@ -281,8 +281,8 @@ static void mcp406_handle_frame(uint8_t id, const uint8_t* payload, uint16_t pay
              (unsigned long)mcp406_cal_total_pts);
         break;
 
-    case MCP406_CMD_CAL_SCORE: /* 18: 校准得分 */
-        if (payload_len >= 12U)
+    case MCP406_CMD_CAL_SCORE: /* 18 (0x12): 校准得分，帧格式 00 1D 12 + 6×Float32 + CRC */
+        if (payload_len >= 24U)
         {
             mcp406_data.cal_mag_score   = parse_be_float(&payload[0]);
             mcp406_data.cal_accel_score = parse_be_float(&payload[8]);
@@ -295,12 +295,20 @@ static void mcp406_handle_frame(uint8_t id, const uint8_t* payload, uint16_t pay
                 mcp406_cal_total_pts = mcp406_data.cal_sample_cnt;
             }
 
+            /* 得分按 2025.08.12 手册第 14 条评价（<0.22优 / 0.22~0.42良 / 0.42~0.72中 /
+             * 0.72~1.02差 / 35=磁干扰较强 / 99.9=校准无效磁干扰太强 /
+             * 200=未开展此校准 / 400=未进入校准） */
             long mag_x100 = (long)(mcp406_data.cal_mag_score * 100.0f);
             long acc_x100 = (long)(mcp406_data.cal_accel_score * 100.0f);
             LOGI("calib: DONE! total=%lu, mag_score=%ld.%02ld, accel_score=%ld.%02ld\r\n",
                  (unsigned long)mcp406_cal_total_pts,
                  mag_x100 / 100, (mag_x100 >= 0 ? mag_x100 : -mag_x100) % 100,
                  acc_x100 / 100, (acc_x100 >= 0 ? acc_x100 : -acc_x100) % 100);
+
+            if (mcp406_data.cal_mag_score >= 99.0f && mcp406_data.cal_mag_score < 100.0f)
+            {
+                LOGI("calib: mag_score=99.9 -> calibration INVALID, magnetic interference too strong!\r\n");
+            }
         }
         break;
 

@@ -97,6 +97,26 @@ typedef enum
     MCP406_ORIENT_Z_UP_270= 16,  /* Z 轴朝上 270° */
 } mcp406_orient_t;
 
+/**
+ * 校准得分评价标准（2025.08.12 版手册第 14 条 CalScore）：
+ *   < 0.22          优
+ *   0.22 ~ 0.42     良
+ *   0.42 ~ 0.72     中
+ *   0.72 ~ 1.02     差
+ *   35.0            外界磁干扰较强
+ *   99.9            校准无效（外界磁干扰太强）
+ *   200.0           未开展此校准功能
+ *   400.0           未进入校准功能，校准指令发送有误
+ */
+#define MCP406_SCORE_EXCELLENT  0.22f   /* 优：低于该值 */
+#define MCP406_SCORE_GOOD       0.42f   /* 良：低于该值 */
+#define MCP406_SCORE_MEDIUM     0.72f   /* 中：低于该值 */
+#define MCP406_SCORE_POOR       1.02f   /* 差：低于该值 */
+#define MCP406_SCORE_STRONG_MAG 35.0f   /* 外界磁干扰较强 */
+#define MCP406_SCORE_INVALID    99.9f   /* 校准无效：外界磁干扰太强 */
+#define MCP406_SCORE_NOT_DONE   200.0f  /* 未开展此校准功能 */
+#define MCP406_SCORE_NOT_ENTER  400.0f  /* 未进入校准功能（指令有误） */
+
 /** 罗盘最新数据包 */
 typedef struct
 {
@@ -121,7 +141,7 @@ typedef struct
 
     /* 校准交互相关 */
     uint32_t cal_sample_cnt;  /* 当前校准已采集点数 */
-    float    cal_mag_score;   /* 磁场校准得分（<0.22 优，0.22~0.42 良，0.42~0.72 中） */
+    float    cal_mag_score;   /* 磁场校准得分（2025.08.12 手册第 14 条评分定义） */
     float    cal_accel_score; /* 加速度校准得分 */
 
     /* 各类数据最近一次更新的系统 tick（0 = 从未收到） */

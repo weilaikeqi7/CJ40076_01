@@ -279,15 +279,15 @@ void display_render(const disp_state_t* s)
 
         /* 得分显示在第二行距离区（digits 4,5,6,7）：
          * 正常得分（如 0.18）放大 100 倍显示为整数（如 18）；
-         * 若为 99.90 则显示 99 或 100；
-         * 若为异常大值（如 200/400）则直接显示整数值 */
+         * 若为 99.9（校准无效，磁干扰太强）显示 99；
+         * 若为异常大值（200 未校准 / 400 未进入校准）则直接显示整数值 */
         if (s->cal_mag_score < 10.0f)
         {
             disp_score = (uint32_t)(s->cal_mag_score * 100.0f + 0.5f);
         }
         else
         {
-            disp_score = (uint32_t)(s->cal_mag_score + 0.5f);
+            disp_score = (uint32_t)(s->cal_mag_score); /* 99.9 截断显示 99 */
         }
 
         /* 航向区显示已采满总点数（42） */
