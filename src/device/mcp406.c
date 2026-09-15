@@ -427,9 +427,10 @@ void mcp406_init(void)
     mcp406_send_cmd(MCP406_CMD_SET_DATA_COMPONENTS, comp_cfg, sizeof(comp_cfg));
     vTaskDelay(pdMS_TO_TICKS(100U));
 
-    /* 3. 关闭校准过程角度输出（标志位 ID 16, False 0x00） */
-    uint8_t no_angle_in_cal[2] = {16U, 0U};
-    mcp406_send_cmd(MCP406_CMD_SET_CONFIG, no_angle_in_cal, sizeof(no_angle_in_cal));
+    /* 3. 开启校准过程角度输出（标志位 ID 16, True 0x01）：
+     *        校准期间罗盘仍推送姿态角，校准页面实时显示航向/俯仰 */
+    uint8_t angle_in_cal[2] = {16U, 1U};
+    mcp406_send_cmd(MCP406_CMD_SET_CONFIG, angle_in_cal, sizeof(angle_in_cal));
     vTaskDelay(pdMS_TO_TICKS(100U));
 
     /* 4. 开启校准自动采样（标志位 ID 13, True 0x01） */
