@@ -375,12 +375,12 @@ void app_run(void* argument)
             case CALIB_MAG:
                 disp.page             = DISP_PAGE_MAG_CAL;
                 disp.cal_cur_points   = (uint16_t)mcp406_get_cal_samples();
-                disp.cal_total_points = MCP406_CAL_TOTAL_POINTS;
+                disp.cal_total_points = (uint16_t)mcp406_get_cal_total_points();
                 break;
             case CALIB_MAG_DONE:
                 disp.page             = DISP_PAGE_MAG_DONE;
-                disp.cal_cur_points   = MCP406_CAL_TOTAL_POINTS;
-                disp.cal_total_points = MCP406_CAL_TOTAL_POINTS;
+                disp.cal_cur_points   = (uint16_t)mcp406_get_cal_total_points();
+                disp.cal_total_points = (uint16_t)mcp406_get_cal_total_points();
                 disp.cal_mag_score    = mcp406_get_cal_mag_score();
                 break;
             case CALIB_ACC_BUSY:

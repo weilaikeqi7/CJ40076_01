@@ -20,8 +20,9 @@
 #define MCP406_FRAME_MAX_LEN 128U
 
 static mcp406_data_t mcp406_data;
-static volatile bool  mcp406_cal_done_flag = false;
-static volatile bool  mcp406_cal_running   = false;
+static volatile bool  mcp406_cal_done_flag   = false;
+static volatile bool  mcp406_cal_running     = false;
+static uint32_t       mcp406_cal_total_pts   = 42U; /* 当前校准总点数（方式60默认为42） */
 
 /* ------------------------------ CRC 校验 ------------------------------ */
 
@@ -259,7 +260,12 @@ static void mcp406_handle_frame(uint8_t id, const uint8_t* payload, uint16_t pay
         {
             mcp406_data.cal_sample_cnt = (uint32_t)payload[0];
         }
-        LOGI("calib point: %lu / %u\r\n", (unsigned long)mcp406_data.cal_sample_cnt, MCP406_CAL_TOTAL_POINTS);
+        if (mcp406_data.cal_sample_cnt > mcp406_cal_total_pts)
+        {
+            mcp406_cal_total_pts = mcp406_data.cal_sample_cnt;
+        }
+        LOGI("calib point: %lu / %lu\r\n", (unsigned long)mcp406_data.cal_sample_cnt,
+             (unsigned long)mcp406_cal_total_pts);
         break;
 
     case MCP406_CMD_CAL_SCORE: /* 18: 校准得分 */
@@ -270,9 +276,16 @@ static void mcp406_handle_frame(uint8_t id, const uint8_t* payload, uint16_t pay
             mcp406_cal_done_flag        = true;
             mcp406_cal_running          = false;
 
+            /* 若结束时已采点数与总点数不一致，以实际完成点数为准对齐 */
+            if (mcp406_data.cal_sample_cnt > 0U)
+            {
+                mcp406_cal_total_pts = mcp406_data.cal_sample_cnt;
+            }
+
             long mag_x100 = (long)(mcp406_data.cal_mag_score * 100.0f);
             long acc_x100 = (long)(mcp406_data.cal_accel_score * 100.0f);
-            LOGI("calib: DONE! mag_score=%ld.%02ld, accel_score=%ld.%02ld\r\n",
+            LOGI("calib: DONE! total=%lu, mag_score=%ld.%02ld, accel_score=%ld.%02ld\r\n",
+                 (unsigned long)mcp406_cal_total_pts,
                  mag_x100 / 100, (mag_x100 >= 0 ? mag_x100 : -mag_x100) % 100,
                  acc_x100 / 100, (acc_x100 >= 0 ? acc_x100 : -acc_x100) % 100);
         }
@@ -446,25 +459,31 @@ void mcp406_calib_mag_start(void)
     mcp406_cal_done_flag       = false;
     mcp406_data.cal_sample_cnt = 0U;
     mcp406_data.cal_mag_score  = 0.0f;
+    mcp406_cal_total_pts       = 42U; /* 方式 60 实际采样点数为 42 点 */
 
     /* 关键步骤 1：先停止 10Hz 连续广播输出，释放罗盘主控以进入校准模式 */
     mcp406_send_cmd(MCP406_CMD_STOP_CONTINUOUS, NULL, 0U);
     vTaskDelay(pdMS_TO_TICKS(80U));
     board_uart_flush_rx(MCP406_UART);
 
-    /* 关键步骤 2：发送磁场自动任意姿态校准命令（十进制 70 = 0x46）：
+    /* 关键步骤 2：发送 TCM-XB 磁场空间自动校准命令：
      * 格式：00 09 0A [校准方式 Uint32 大端] [CRC16]
-     * 方式 70 (0x00000046)：磁场自动任意姿态采样校准（空中8字运动）
-     * 数据帧：00 09 0A 00 00 00 46 26 4E */
-    uint8_t mode[4] = {0x00U, 0x00U, 0x00U, (uint8_t)MCP406_CAL_MODE_MAG_ANY_ATTITUDE};
+     * 方式 60 (0x0000003C)：磁场空间自动校准（空中8字运动/三维旋转，实际总采点42点）
+     * 数据帧：00 09 0A 00 00 00 3C F9 93 */
+    uint8_t mode[4] = {0x00U, 0x00U, 0x00U, (uint8_t)MCP406_CAL_MODE_MAG_SPACE_AUTO};
     mcp406_send_cmd(MCP406_CMD_START_CAL, mode, sizeof(mode));
 
-    LOGI("calib: StopCont sent -> StartCal (mode=70 dec [0x46]: 00 09 0A 00 00 00 46 26 4E)\r\n");
+    LOGI("calib: StopCont sent -> StartCal (mode=60 space auto, total=42: 00 09 0A 00 00 00 3C F9 93)\r\n");
 }
 
 uint32_t mcp406_get_cal_samples(void)
 {
     return mcp406_data.cal_sample_cnt;
+}
+
+uint32_t mcp406_get_cal_total_points(void)
+{
+    return mcp406_cal_total_pts;
 }
 
 bool mcp406_is_cal_done(void)
