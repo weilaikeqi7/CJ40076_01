@@ -152,7 +152,8 @@ typedef struct
 
 /**
  * @brief 上电并初始化 MCP-406 电子罗盘：
- *        开电源(PA8) -> 等待启动 -> 设置安装方式 ->
+ *        开电源(PA8) -> 等待启动 -> 查询型号版本 ->
+ *        设置安装方式（Y 轴朝上 180°，方式=12）->
  *        配置输出数据组成(Heading/Pitch/Roll) -> 启动连续广播(10Hz) -> 保存到 EEPROM。
  * @note  必须在 FreeRTOS 任务上下文调用（内部有 vTaskDelay）。
  */
