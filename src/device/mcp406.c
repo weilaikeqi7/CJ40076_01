@@ -531,17 +531,21 @@ void mcp406_save(void)
     mcp406_cal_done_flag = false;
 }
 
-void mcp406_abort_cal(void)
+void mcp406_stop_cal(void)
 {
-    if (mcp406_cal_running)
-    {
-        /* 仅在用户主动关机/中止时发送 StopCal */
-        mcp406_send_cmd(MCP406_CMD_STOP_CAL, NULL, 0U);
-        vTaskDelay(pdMS_TO_TICKS(100U));
-        mcp406_send_cmd(MCP406_CMD_START_CONTINUOUS, NULL, 0U);
-    }
+    /* 发送 StopCal 命令（ID 11）：00 05 0B 4E 9E */
+    mcp406_send_cmd(MCP406_CMD_STOP_CAL, NULL, 0U);
+    vTaskDelay(pdMS_TO_TICKS(100U));
+    mcp406_send_cmd(MCP406_CMD_START_CONTINUOUS, NULL, 0U);
+
     mcp406_cal_running   = false;
     mcp406_cal_done_flag = false;
+    LOGI("mcp406: sent StopCal (00 05 0B 4E 9E) and resumed continuous mode\r\n");
+}
+
+void mcp406_abort_cal(void)
+{
+    mcp406_stop_cal();
 }
 
 void mcp406_calib_mag_end(void)

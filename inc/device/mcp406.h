@@ -195,10 +195,9 @@ float mcp406_get_cal_mag_score(void);
 void mcp406_save(void);
 
 /**
- * @brief 主动放弃/中止当前校准。
- *        注意：发送此命令后罗盘会认为校准失败，仅用于用户中途强行退出或关机。
+ * @brief 停止当前校准（发送 StopCal 命令，指令：00 05 0B 4E 9E），随后恢复连续广播模式。
  */
-void mcp406_abort_cal(void);
+void mcp406_stop_cal(void);
 
 /**
  * @brief 磁场校准结束并保存（已废弃直接调用 StopCal，保留兼容）。

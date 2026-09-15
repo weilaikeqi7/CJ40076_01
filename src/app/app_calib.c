@@ -107,9 +107,9 @@ bool calib_handle_key(const app_key_event_t* evt)
                 state = CALIB_MAG;
                 app_key_set_calib_mode(true);
                 mcp406_calib_mag_start();
-                LOGI("calib: mag calibration started (auto figure-8)\r\n");
+                LOGI("calib: mag calibration started (mode=60 space auto)\r\n");
                 return true;
-            case 6: /* 六击：已由采满自动结束代替，此处忽略 */
+            case 6: /* 六击：仅磁场校准中有效（此处 NONE 态忽略） */
                 return true;
             case 7: /* 七击：PIt */
                 ensure_imu_on();
@@ -152,6 +152,16 @@ bool calib_handle_key(const app_key_event_t* evt)
     /* ---------- 磁场校准进行中或采满完成状态 ---------- */
     if (state == CALIB_MAG || state == CALIB_MAG_DONE)
     {
+        /* 六击：直接发送停止校准命令（00 05 0B 4E 9E），退出校准 */
+        if ((evt->evt & APP_KEY_EVT_MODE_CLICKS) != 0U && evt->arg == 6U)
+        {
+            mcp406_stop_cal();
+            state = CALIB_NONE;
+            app_key_set_calib_mode(false);
+            LOGI("calib: 6 clicks -> sent StopCal (00 05 0B 4E 9E) and exited calib\r\n");
+            return true;
+        }
+
         /* 自动检测是否采满并收到罗盘返回的 CalScore */
         if (state == CALIB_MAG && mcp406_is_cal_done())
         {
@@ -231,7 +241,7 @@ void calib_mag_abort(void)
 {
     if (state == CALIB_MAG || state == CALIB_MAG_DONE)
     {
-        mcp406_abort_cal();
+        mcp406_stop_cal();
         state = CALIB_NONE;
         app_key_set_calib_mode(false);
         LOGI("calib: mag calib aborted\r\n");
