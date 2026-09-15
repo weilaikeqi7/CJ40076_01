@@ -452,14 +452,14 @@ void mcp406_calib_mag_start(void)
     vTaskDelay(pdMS_TO_TICKS(80U));
     board_uart_flush_rx(MCP406_UART);
 
-    /* 关键步骤 2：发送 TCM-XB 磁场空间自动校准命令：
+    /* 关键步骤 2：发送磁场自动任意姿态校准命令（0x70）：
      * 格式：00 09 0A [校准方式 Uint32] [CRC16]
-     * 方式 60 (0x0000003C)：磁场空间自动校准（空中8字运动/三维任意姿态）
-     * 数据帧：00 09 0A 00 00 00 3C F9 93 */
-    uint8_t mode[4] = {0x00U, 0x00U, 0x00U, (uint8_t)MCP406_CAL_MODE_MAG_SPACE_AUTO};
+     * 方式 0x70：磁场自动任意姿态采样校准（空中8字运动）
+     * 数据帧：00 09 0A 00 00 00 70 70 DB */
+    uint8_t mode[4] = {0x00U, 0x00U, 0x00U, (uint8_t)MCP406_CAL_MODE_MAG_ANY_ATTITUDE};
     mcp406_send_cmd(MCP406_CMD_START_CAL, mode, sizeof(mode));
 
-    LOGI("calib: StopCont sent -> StartCal (mode=60 space auto: 00 09 0A 00 00 00 3C F9 93)\r\n");
+    LOGI("calib: StopCont sent -> StartCal (mode=0x70 auto any attitude: 00 09 0A 00 00 00 70 70 DB)\r\n");
 }
 
 uint32_t mcp406_get_cal_samples(void)
