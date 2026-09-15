@@ -121,6 +121,19 @@ static void mcp406_handle_frame(uint8_t id, const uint8_t* payload, uint16_t pay
 
     switch (id)
     {
+    case MCP406_CMD_MOD_INFO_RESP: /* 0x02: 获取罗盘型号与硬件版本响应 */
+        {
+            char info_buf[32];
+            uint16_t cpy_len = payload_len < (sizeof(info_buf) - 1U) ? payload_len : (sizeof(info_buf) - 1U);
+            if (cpy_len > 0U)
+            {
+                memcpy(info_buf, payload, cpy_len);
+            }
+            info_buf[cpy_len] = '\0';
+            LOGI("mcp406: device model/version: [%s]\r\n", info_buf);
+        }
+        break;
+
     case MCP406_CMD_GET_DATA_RESP: /* 0x05: 数据查询/广播响应 */
         if (payload_len >= 1U)
         {
@@ -386,6 +399,15 @@ void mcp406_init(void)
     /* 模块上电就绪等待（罗盘内部微处理器启动约 500ms） */
     vTaskDelay(pdMS_TO_TICKS(500U));
     board_uart_flush_rx(MCP406_UART);
+
+    /* 0. 查询罗盘型号与固件版本（GetModInfo: 00 05 01 EF D4） */
+    mcp406_send_cmd(MCP406_CMD_GET_MOD_INFO, NULL, 0U);
+    /* 轮询接收响应帧 */
+    for (uint8_t wait_i = 0U; wait_i < 10U; wait_i++)
+    {
+        vTaskDelay(pdMS_TO_TICKS(10U));
+        mcp406_poll();
+    }
 
     /* 1. 设置安装方式为标准 0°（ID 10, 值 1） */
     uint8_t orient_cfg[2] = {MCP406_CFG_MOUNT_ORIENTATION, (uint8_t)MCP406_ORIENT_STD_0};
