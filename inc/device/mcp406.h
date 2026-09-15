@@ -186,16 +186,20 @@ void mcp406_set_orientation(mcp406_orient_t orient);
 #define MCP406_CAL_MODE_ACCEL              100U /* 方式 100：加速度校准 */
 #define MCP406_CAL_MODE_MAG_ACCEL          110U /* 方式 110：磁场和加速度联合校准 */
 
-/** 自动任意姿态校准默认总采样点数 */
-#define MCP406_CAL_TOTAL_POINTS 54U
+/** 校准总采样点数（磁场空间手动校准，默认 12 点，由标志位 ID 12 设置） */
+#define MCP406_CAL_TOTAL_POINTS 12U
 
 /**
- * @brief 磁场校准开始（方式 60：磁场空间自动校准）。
- *        发送指令：00 09 0A 00 00 00 3C F9 93。
- *        启动前先停止 10Hz 连续广播以释放罗盘引擎，罗盘进入空间自动采样，
- *        手持做 8 字运动，每采到一点返回当前采样点数（ID 17），采满后自动结束并返回得分。
+ * @brief 磁场空间手动校准开始（方式 10：磁场空间手动校准）。
+ *        发送指令：00 09 0A 00 00 00 0A AF 06。
+ *        启动前先停止 10Hz 连续广播以释放罗盘引擎，罗盘进入空间手动采样：
+ *        每将设备转到指定姿态静止后，主机发送一次采样命令（TakeUserCalSample），
+ *        罗盘返回当前已采点数（ID 17），采满后自动结束并返回得分（ID 18）。
  */
 void mcp406_calib_mag_start(void);
+
+/** 磁场空间手动校准：在当前姿态采集一个采样点（TakeUserCalSample） */
+void mcp406_take_cal_sample(void);
 
 /** 获取当前磁场校准已采点数 */
 uint32_t mcp406_get_cal_samples(void);

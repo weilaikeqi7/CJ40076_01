@@ -102,12 +102,12 @@ bool calib_handle_key(const app_key_event_t* evt)
                 ensure_imu_on();
                 page_enter(CALIB_HER);
                 return true;
-            case 5: /* 五击：磁场校准开始（空中8字运动，自动采样） */
+            case 5: /* 五击：磁场空间手动校准开始（12 点，每姿态电源键采样） */
                 ensure_imu_on();
                 state = CALIB_MAG;
                 app_key_set_calib_mode(true);
                 mcp406_calib_mag_start();
-                LOGI("calib: mag calibration started (mode=60 space auto)\r\n");
+                LOGI("calib: mag calibration started (mode=10 space manual)\r\n");
                 return true;
             case 6: /* 六击：仅磁场校准中有效（此处 NONE 态忽略） */
                 return true;
@@ -162,12 +162,11 @@ bool calib_handle_key(const app_key_event_t* evt)
             return true;
         }
 
-        /* 自动检测是否采满并收到罗盘返回的 CalScore */
-        if (state == CALIB_MAG && mcp406_is_cal_done())
+        /* 电源键短按：当前姿态采集一个采样点（手动校准） */
+        if (state == CALIB_MAG && (evt->evt & APP_KEY_EVT_POWER_SHORT) != 0U)
         {
-            state = CALIB_MAG_DONE;
-            LOGI("calib: mag samples full, cal score=%.3f, waiting both-long 1s to save\r\n",
-                 mcp406_get_cal_mag_score());
+            mcp406_take_cal_sample();
+            return true;
         }
 
         /* 同时长按电源键和模式键 1s：保存参数并退出校准 */

@@ -489,21 +489,29 @@ void mcp406_calib_mag_start(void)
     mcp406_cal_done_flag       = false;
     mcp406_data.cal_sample_cnt = 0U;
     mcp406_data.cal_mag_score  = 0.0f;
-    mcp406_cal_total_pts       = 42U; /* 方式 60 实际采样点数为 42 点 */
+    mcp406_cal_total_pts       = MCP406_CAL_TOTAL_POINTS; /* 手动空间校准：默认 12 点 */
 
     /* 关键步骤 1：先停止 10Hz 连续广播输出，释放罗盘主控以进入校准模式 */
     mcp406_send_cmd(MCP406_CMD_STOP_CONTINUOUS, NULL, 0U);
     vTaskDelay(pdMS_TO_TICKS(80U));
     board_uart_flush_rx(MCP406_UART);
 
-    /* 关键步骤 2：发送 TCM-XB 磁场空间自动校准命令：
+    /* 关键步骤 2：发送 TCM-XB 磁场空间手动校准命令：
      * 格式：00 09 0A [校准方式 Uint32 大端] [CRC16]
-     * 方式 60 (0x0000003C)：磁场空间自动校准（空中8字运动/三维旋转，实际总采点42点）
-     * 数据帧：00 09 0A 00 00 00 3C F9 93 */
-    uint8_t mode[4] = {0x00U, 0x00U, 0x00U, (uint8_t)MCP406_CAL_MODE_MAG_SPACE_AUTO};
+     * 方式 10 (0x0000000A)：磁场空间手动校准（每姿态静止后主机发采样命令）
+     * 数据帧：00 09 0A 00 00 00 0A AF 06 */
+    uint8_t mode[4] = {0x00U, 0x00U, 0x00U, (uint8_t)MCP406_CAL_MODE_MAG_3D};
     mcp406_send_cmd(MCP406_CMD_START_CAL, mode, sizeof(mode));
 
-    LOGI("calib: StopCont sent -> StartCal (mode=60 space auto, total=42: 00 09 0A 00 00 00 3C F9 93)\r\n");
+    LOGI("calib: StopCont sent -> StartCal (mode=10 space manual, total=%lu: 00 09 0A 00 00 00 0A AF 06)\r\n",
+         (unsigned long)mcp406_cal_total_pts);
+}
+
+void mcp406_take_cal_sample(void)
+{
+    /* 手动校准采样命令（ID 31 / 0x1F） */
+    mcp406_send_cmd(MCP406_CMD_TAKE_CAL_SAMPLE, NULL, 0U);
+    LOGI("calib: TakeUserCalSample sent\r\n");
 }
 
 uint32_t mcp406_get_cal_samples(void)
