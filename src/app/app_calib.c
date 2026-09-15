@@ -215,6 +215,12 @@ bool calib_handle_key(const app_key_event_t* evt)
 
 calib_state_t calib_get_state(void)
 {
+    /* 在无按键事件时，主动检查底层 mcp406 是否已收到 CalScore 完成帧 */
+    if (state == CALIB_MAG && mcp406_is_cal_done())
+    {
+        state = CALIB_MAG_DONE;
+        LOGI("calib: auto detected mag cal done -> state=CALIB_MAG_DONE\r\n");
+    }
     return state;
 }
 

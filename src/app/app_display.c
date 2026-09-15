@@ -277,9 +277,10 @@ void display_render(const disp_state_t* s)
     {
         uint32_t disp_score;
 
-        /* 得分显示在距离区：
-         * 小于 10.0 的正常得分放大 100 倍以整数显示（如 0.18 显示 18）；
-         * 大于 10.0 的异常分值（如 200 未校准/400 失败）直接显示整数 */
+        /* 得分显示在第二行距离区（digits 4,5,6,7）：
+         * 正常得分（如 0.18）放大 100 倍显示为整数（如 18）；
+         * 若为 99.90 则显示 99 或 100；
+         * 若为异常大值（如 200/400）则直接显示整数值 */
         if (s->cal_mag_score < 10.0f)
         {
             disp_score = (uint32_t)(s->cal_mag_score * 100.0f + 0.5f);
@@ -289,8 +290,15 @@ void display_render(const disp_state_t* s)
             disp_score = (uint32_t)(s->cal_mag_score + 0.5f);
         }
 
-        LcdSegments_SetNumberRightAligned(digits_distance, 4U, disp_score);
+        /* 航向区显示已采满总点数（42） */
         LcdSegments_SetNumberRightAligned(digits_heading, 3U, (uint32_t)s->cal_total_points);
+
+        /* 距离区显示最终得分 */
+        LcdSegments_SetNumberRightAligned(digits_distance, 4U, disp_score);
+
+        /* 中行俯仰区清空，避免残留乱码 */
+        LcdSegments_SetDigit(26, -1);
+        LcdSegments_SetDigit(27, -1);
 
         draw_battery(s->batt_level);
         LcdSegments_Flush();
