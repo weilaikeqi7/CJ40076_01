@@ -258,14 +258,30 @@ void display_render(const disp_state_t* s)
 
     LcdSegments_ClearBuffer();
 
-    /* ---------------- 磁场校准进行中：显示已校准点数 / 总点数 ---------------- */
+    /* ---------------- 磁场校准进行中：实时姿态 + 已采点数/总点数 ---------------- */
     if (s->page == DISP_PAGE_MAG_CAL)
     {
-        /* 航向区（3位）：当前已校准点数 */
-        LcdSegments_SetNumberRightAligned(digits_heading, 3U, (uint32_t)s->cal_cur_points);
+        /* 顶行航向区（3位）：实时航向角（罗盘已开启校准过程角度输出） */
+        if (s->att_valid)
+        {
+            LcdSegments_SetNumberRightAligned(digits_heading, 3U,
+                                              (uint32_t)(s->heading_c01 / 100U));
+        }
+        else
+        {
+            draw_dashes(digits_heading, 3U);
+        }
+        LcdSegments_SetSymbol(LCD_SYMBOL_AZIMUTH_DEG, s->att_valid);
+        draw_compass(s->heading_c01, s->att_valid);
 
-        /* 距离区（4位）：校准总点数（54） */
-        LcdSegments_SetNumberRightAligned(digits_distance, 4U, (uint32_t)s->cal_total_points);
+        /* 中行俯仰区（26/27）：实时俯仰角 */
+        draw_pitch(s->pitch_c01, s->att_valid);
+
+        /* 第二行距离区（4位）：已采点数 + 总点数（如 0312 = 第3点/共12点） */
+        LcdSegments_SetDigit(4, (int8_t)((s->cal_cur_points / 10U) % 10U));
+        LcdSegments_SetDigit(5, (int8_t)(s->cal_cur_points % 10U));
+        LcdSegments_SetDigit(6, (int8_t)((s->cal_total_points / 10U) % 10U));
+        LcdSegments_SetDigit(7, (int8_t)(s->cal_total_points % 10U));
 
         draw_battery(s->batt_level);
         LcdSegments_Flush();
