@@ -1,0 +1,23 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "J-Link Debug CJ40076",
+            "type": "cortex-debug",
+            "request": "launch",
+            "servertype": "jlink",
+            "cwd": "${workspaceFolder}",
+            "executable": "${workspaceFolder}/build/CJ40076.elf",
+            "device": "N32L403KB",
+            "interface": "swd",
+            "serverpath": "JLinkGDBServerCL.exe",
+            "gdbPath": "gdb-multiarch.exe",
+            "runToEntryPoint": "main",
+            "preLaunchTask": "CMake: Build",
+            "serverArgs": [
+                "-speed",
+                "1000"
+            ]
+        }
+    ]
+}

@@ -1,0 +1,10 @@
+device N32L403KB
+si SWD
+speed 4000
+rsettype 0
+r
+h
+loadfile build/CJ40076.hex
+r
+g
+exit
