@@ -156,21 +156,21 @@ void mcp406_stop_continuous(void);
 /** 设置罗盘安装方式（1~16） */
 void mcp406_set_orientation(mcp406_orient_t orient);
 
-/** TCM XB 校准方式定义（StartCal 参数） */
-#define MCP406_CAL_MODE_MAG_3D              10U   /* 三维磁场校准 */
-#define MCP406_CAL_MODE_MAG_PLANE_MANUAL   20U   /* 磁场平面手动校准 */
-#define MCP406_CAL_MODE_MAG_PLANE_AUTO     50U   /* 磁场平面自动校准 */
-#define MCP406_CAL_MODE_MAG_SPACE_AUTO     60U   /* 磁场空间自动校准 */
-#define MCP406_CAL_MODE_MAG_ANY_ATTITUDE   0x70U /* 磁场自动任意姿态校准（0x70 / 112） */
-#define MCP406_CAL_MODE_ACCEL              100U  /* 加速度校准 */
-#define MCP406_CAL_MODE_MAG_ACCEL          110U  /* 磁场和加速度联合校准 */
+/** TCM XB 校准方式定义（StartCal 参数，均为十进制数值） */
+#define MCP406_CAL_MODE_MAG_3D              10U  /* 方式 10：三维磁场校准 */
+#define MCP406_CAL_MODE_MAG_PLANE_MANUAL   20U  /* 方式 20：磁场平面手动校准 */
+#define MCP406_CAL_MODE_MAG_PLANE_AUTO     50U  /* 方式 50：磁场平面自动校准 */
+#define MCP406_CAL_MODE_MAG_SPACE_AUTO     60U  /* 方式 60：磁场空间自动校准 */
+#define MCP406_CAL_MODE_MAG_ANY_ATTITUDE   70U  /* 方式 70 (十进制 70 = 0x46)：磁场自动任意姿态校准 */
+#define MCP406_CAL_MODE_ACCEL              100U /* 方式 100：加速度校准 */
+#define MCP406_CAL_MODE_MAG_ACCEL          110U /* 方式 110：磁场和加速度联合校准 */
 
 /** 自动任意姿态校准默认总采样点数 */
 #define MCP406_CAL_TOTAL_POINTS 54U
 
 /**
- * @brief 磁场自动任意姿态校准开始（校准命令方式 0x70）。
- *        发送指令：00 09 0A 00 00 00 70 70 DB。
+ * @brief 磁场自动任意姿态校准开始（校准方式：十进制 70，即 0x00000046）。
+ *        发送指令：00 09 0A 00 00 00 46 26 4E。
  *        启动前先停止 10Hz 连续广播以释放罗盘引擎，罗盘进入自动任意姿态采样，
  *        手持做 8 字运动，每采到一点返回当前采样点数（ID 17），采满后自动结束并返回得分。
  */
