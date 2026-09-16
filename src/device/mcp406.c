@@ -1,6 +1,14 @@
 /**
  * @file mcp406.c
- * @brief MCP-406 高精度三维电子罗盘驱动实现
+ * @brief MCP-406-TTL 高精度三维电子罗盘驱动实现
+ *
+ * 依据：《MCP-406-TTL 型电子罗盘用户开发手册 - 2025.08.12》
+ *   - 帧格式：[Length_H Length_L] [ID] [Data...] [CRC_H CRC_L]
+ *   - CRC-16：手册附录 CRC_Check 官方例程（对 Length + 数据包全部字节校验）；
+ *   - 浮点数：IEEE 754 单精度大端；
+ *   - 手册第 11 条：发送 StartCal 后罗盘会立即采集第一组数据并输出采样点编号；
+ *   - 手册第 11 条：校准过程中发送 StopCal 则认为校准失败；
+ *   - 手册第 14 条：CalScore 数据帧 00 1D 12 + 6×Float32（磁场得分/加速度得分等）。
  */
 #include "mcp406.h"
 
@@ -15,52 +23,45 @@
 
 #define MCP406_UART BOARD_UART_COMPASS
 
-#define MCP406_RX_BUF_SIZE 128U
+#define MCP406_RX_BUF_SIZE   128U
 #define MCP406_FRAME_MIN_LEN 5U
 #define MCP406_FRAME_MAX_LEN 128U
 
 static mcp406_data_t mcp406_data;
-static volatile bool  mcp406_cal_done_flag   = false;
-static volatile bool  mcp406_cal_running     = false;
-static uint32_t       mcp406_cal_total_pts   = 42U; /* 当前校准总点数（方式60默认为42） */
+static volatile bool mcp406_cal_done_flag = false;
+static volatile bool mcp406_cal_running   = false;
+static uint32_t      mcp406_cal_total_pts = MCP406_CAL_TOTAL_POINTS; /* 手动空间校准默认 12 点 */
 
 /* ------------------------------ CRC 校验 ------------------------------ */
 
 /**
- * @brief 计算 MCP-406 CRC-16 校验码（手册第 377 行算法）
- *        多项式: 0x1021, 初值: 0x0000
+ * @brief MCP-406 CRC-16 校验（手册附录官方例程 CRC_Check 原样移植）
+ *        对整帧（Length + 数据包）全部字节做校验。
  */
-static uint16_t mcp406_calc_crc(const uint8_t* data, uint32_t len)
+static uint16_t mcp406_calc_crc(const uint8_t* buffer, int32_t len)
 {
-    unsigned char  i;
-    const uint8_t* ptr = data;
-    unsigned int   crc = 0U;
-    uint32_t       index = len;
+    int32_t  i = 0;
+    uint32_t crc = 0U;
 
-    while (index--)
+    for (i = 0; i < len; i++)
     {
-        for (i = 0x80U; i != 0U; i = (unsigned char)(i >> 1U))
-        {
-            if ((crc & 0x8000U) != 0U)
-            {
-                crc = (crc << 1U) ^ 0x1021U;
-            }
-            else
-            {
-                crc = crc << 1U;
-            }
-            if ((*ptr & i) != 0U)
-            {
-                crc ^= 0x1021U;
-            }
-        }
-        ptr++;
+        crc = (crc >> 8) | (crc << 8);
+        crc = crc & 0x0000FFFFU;
+        crc ^= buffer[i];
+        crc = crc & 0x0000FFFFU;
+        crc ^= (crc & 0x00FFU) >> 4;
+        crc = crc & 0x0000FFFFU;
+        crc ^= (crc << 8) << 4;
+        crc = crc & 0x0000FFFFU;
+        crc ^= ((crc & 0x00FFU) << 4) << 1;
+        crc = crc & 0x0000FFFFU;
     }
-    return (uint16_t)(crc & 0xFFFFU);
+    return (uint16_t)(crc & 0x0000FFFFU);
 }
 
 /* ------------------------------ 大端解析 ------------------------------ */
 
+/** 字节转浮点（手册附录 Byte_To_Float 等价实现，大端 4 字节 -> float） */
 static float parse_be_float(const uint8_t* p)
 {
     union
@@ -106,7 +107,7 @@ static void mcp406_send_cmd(uint8_t id, const uint8_t* payload, uint16_t payload
         memcpy(&buf[3], payload, payload_len);
     }
 
-    crc = mcp406_calc_crc(buf, (uint32_t)(3U + payload_len));
+    crc = mcp406_calc_crc(buf, (int32_t)(3U + payload_len));
     buf[3U + payload_len] = (uint8_t)(crc >> 8);
     buf[4U + payload_len] = (uint8_t)(crc & 0xFFU);
 
@@ -121,10 +122,11 @@ static void mcp406_handle_frame(uint8_t id, const uint8_t* payload, uint16_t pay
 
     switch (id)
     {
-    case MCP406_CMD_MOD_INFO_RESP: /* 0x02: 获取罗盘型号与硬件版本响应 */
+    case MCP406_CMD_MOD_INFO_RESP: /* 0x02: 罗盘型号与硬件版本响应 */
         {
-            char info_buf[32];
-            uint16_t cpy_len = payload_len < (sizeof(info_buf) - 1U) ? payload_len : (sizeof(info_buf) - 1U);
+            char     info_buf[32];
+            uint16_t cpy_len = payload_len < (sizeof(info_buf) - 1U) ? payload_len
+                                                                     : (sizeof(info_buf) - 1U);
             if (cpy_len > 0U)
             {
                 memcpy(info_buf, payload, cpy_len);
@@ -180,14 +182,14 @@ static void mcp406_handle_frame(uint8_t id, const uint8_t* payload, uint16_t pay
                     }
                     break;
 
-                case MCP406_DATA_DISTORTION: /* 8: 畸变 (Boolean 1B) */
+                case MCP406_DATA_DISTORTION: /* 8: 磁场超范围 (Boolean) */
                     if (offset < payload_len)
                     {
                         mcp406_data.distortion = (payload[offset++] != 0U);
                     }
                     break;
 
-                case MCP406_DATA_CAL_STATUS: /* 9: 校准状态 (Boolean 1B) */
+                case MCP406_DATA_CAL_STATUS: /* 9: 校准状态 (Boolean) */
                     if (offset < payload_len)
                     {
                         mcp406_data.cal_status = (payload[offset++] != 0U);
@@ -250,17 +252,20 @@ static void mcp406_handle_frame(uint8_t id, const uint8_t* payload, uint16_t pay
                 }
             }
 
-            long h_x100 = (long)(mcp406_data.heading * 100.0f);
-            long p_x100 = (long)(mcp406_data.pitch * 100.0f);
-            long r_x100 = (long)(mcp406_data.roll * 100.0f);
-            LOGI("mcp406: data head=%ld.%02ld pit=%ld.%02ld roll=%ld.%02ld\r\n",
-                 h_x100 / 100, (h_x100 >= 0 ? h_x100 : -h_x100) % 100,
-                 p_x100 / 100, (p_x100 >= 0 ? p_x100 : -p_x100) % 100,
-                 r_x100 / 100, (r_x100 >= 0 ? r_x100 : -r_x100) % 100);
+            /* RTT 日志（nano 库不支持 %f，放大 100 倍整数打印） */
+            {
+                long h_x100 = (long)(mcp406_data.heading * 100.0f);
+                long p_x100 = (long)(mcp406_data.pitch * 100.0f);
+                long r_x100 = (long)(mcp406_data.roll * 100.0f);
+                LOGI("mcp406: data head=%ld.%02ld pit=%ld.%02ld roll=%ld.%02ld\r\n",
+                     h_x100 / 100, (h_x100 >= 0 ? h_x100 : -h_x100) % 100,
+                     p_x100 / 100, (p_x100 >= 0 ? p_x100 : -p_x100) % 100,
+                     r_x100 / 100, (r_x100 >= 0 ? r_x100 : -r_x100) % 100);
+            }
         }
         break;
 
-    case MCP406_CMD_USER_CAL_SAMP_COUNT: /* 17 / 0x11: 校准采样点数 */
+    case MCP406_CMD_USER_CAL_SAMP_COUNT: /* 17 / 0x11: 校准采样点数返回（Uint32） */
         if (payload_len >= 4U)
         {
             mcp406_data.cal_sample_cnt = parse_be_u32(&payload[0]);
@@ -281,33 +286,27 @@ static void mcp406_handle_frame(uint8_t id, const uint8_t* payload, uint16_t pay
              (unsigned long)mcp406_cal_total_pts);
         break;
 
-    case MCP406_CMD_CAL_SCORE: /* 18 (0x12): 校准得分，帧格式 00 1D 12 + 6×Float32 + CRC */
-        if (payload_len >= 24U)
+    case MCP406_CMD_CAL_SCORE: /* 18 / 0x12: 校准得分（6 × Float32 大端） */
+        if (payload_len >= 12U)
         {
             mcp406_data.cal_mag_score   = parse_be_float(&payload[0]);
             mcp406_data.cal_accel_score = parse_be_float(&payload[8]);
             mcp406_cal_done_flag        = true;
             mcp406_cal_running          = false;
 
-            /* 若结束时已采点数与总点数不一致，以实际完成点数为准对齐 */
+            /* 结束时以实际采点数为总点数对齐显示 */
             if (mcp406_data.cal_sample_cnt > 0U)
             {
                 mcp406_cal_total_pts = mcp406_data.cal_sample_cnt;
             }
 
-            /* 得分按 2025.08.12 手册第 14 条评价（<0.22优 / 0.22~0.42良 / 0.42~0.72中 /
-             * 0.72~1.02差 / 35=磁干扰较强 / 99.9=校准无效磁干扰太强 /
-             * 200=未开展此校准 / 400=未进入校准） */
-            long mag_x100 = (long)(mcp406_data.cal_mag_score * 100.0f);
-            long acc_x100 = (long)(mcp406_data.cal_accel_score * 100.0f);
-            LOGI("calib: DONE! total=%lu, mag_score=%ld.%02ld, accel_score=%ld.%02ld\r\n",
-                 (unsigned long)mcp406_cal_total_pts,
-                 mag_x100 / 100, (mag_x100 >= 0 ? mag_x100 : -mag_x100) % 100,
-                 acc_x100 / 100, (acc_x100 >= 0 ? acc_x100 : -acc_x100) % 100);
-
-            if (mcp406_data.cal_mag_score >= 99.0f && mcp406_data.cal_mag_score < 100.0f)
             {
-                LOGI("calib: mag_score=99.9 -> calibration INVALID, magnetic interference too strong!\r\n");
+                long mag_x100 = (long)(mcp406_data.cal_mag_score * 100.0f);
+                long acc_x100 = (long)(mcp406_data.cal_accel_score * 100.0f);
+                LOGI("calib: DONE! total=%lu, mag_score=%ld.%02ld, accel_score=%ld.%02ld\r\n",
+                     (unsigned long)mcp406_cal_total_pts,
+                     mag_x100 / 100, (mag_x100 >= 0 ? mag_x100 : -mag_x100) % 100,
+                     acc_x100 / 100, (acc_x100 >= 0 ? acc_x100 : -acc_x100) % 100);
             }
         }
         break;
@@ -316,7 +315,7 @@ static void mcp406_handle_frame(uint8_t id, const uint8_t* payload, uint16_t pay
         LOGI("mcp406: save done\r\n");
         break;
 
-    case MCP406_CMD_SET_CONFIG_DONE: /* 19: 设置完成响应 */
+    case MCP406_CMD_SET_CONFIG_DONE: /* 19: 设置参数完成响应 */
         LOGI("mcp406: config done\r\n");
         break;
 
@@ -351,7 +350,7 @@ void mcp406_poll(void)
         {
             uint16_t frame_len = ((uint16_t)rx_buf[0] << 8) | rx_buf[1];
 
-            /* 合法性检查：MCP-406 帧长范围通常为 5 到 128 字节 */
+            /* 合法性检查 */
             if (frame_len < MCP406_FRAME_MIN_LEN || frame_len > MCP406_FRAME_MAX_LEN)
             {
                 memmove(rx_buf, rx_buf + 1, (size_t)(rx_len - 1U));
@@ -365,33 +364,35 @@ void mcp406_poll(void)
                 break;
             }
 
-            /* 校验 CRC-16 */
-            uint16_t calc_crc = mcp406_calc_crc(rx_buf, (uint32_t)(frame_len - 2U));
-            uint16_t recv_crc = ((uint16_t)rx_buf[frame_len - 2U] << 8) |
-                                rx_buf[frame_len - 1U];
-
-            if (calc_crc == recv_crc)
+            /* 校验 CRC-16（对 Length + 数据包全部字节） */
             {
-                /* 完整有效帧 */
-                mcp406_handle_frame(rx_buf[2], &rx_buf[3], (uint16_t)(frame_len - 5U));
+                uint16_t calc_crc = mcp406_calc_crc(rx_buf, (int32_t)(frame_len - 2U));
+                uint16_t recv_crc = ((uint16_t)rx_buf[frame_len - 2U] << 8) |
+                                    rx_buf[frame_len - 1U];
 
-                if (rx_len > frame_len)
+                if (calc_crc == recv_crc)
                 {
-                    memmove(rx_buf, rx_buf + frame_len, (size_t)(rx_len - frame_len));
+                    /* 完整有效帧 */
+                    mcp406_handle_frame(rx_buf[2], &rx_buf[3], (uint16_t)(frame_len - 5U));
+
+                    if (rx_len > frame_len)
+                    {
+                        memmove(rx_buf, rx_buf + frame_len, (size_t)(rx_len - frame_len));
+                    }
+                    rx_len -= frame_len;
                 }
-                rx_len -= frame_len;
-            }
-            else
-            {
-                if (mcp406_cal_running)
+                else
                 {
-                    LOGI("calib rx err: len=%u calc_crc=0x%04X recv_crc=0x%04X id=0x%02X\r\n",
-                         (unsigned int)frame_len, (unsigned int)calc_crc, (unsigned int)recv_crc,
-                         (unsigned int)rx_buf[2]);
+                    if (mcp406_cal_running)
+                    {
+                        LOGI("calib rx err: len=%u calc_crc=0x%04X recv_crc=0x%04X id=0x%02X\r\n",
+                             (unsigned int)frame_len, (unsigned int)calc_crc,
+                             (unsigned int)recv_crc, (unsigned int)rx_buf[2]);
+                    }
+                    /* CRC 不匹配，滑动 1 字节重新搜索帧头 */
+                    memmove(rx_buf, rx_buf + 1, (size_t)(rx_len - 1U));
+                    rx_len--;
                 }
-                /* CRC 不匹配，滑动 1 字节重新搜索帧头 */
-                memmove(rx_buf, rx_buf + 1, (size_t)(rx_len - 1U));
-                rx_len--;
             }
         }
     }
@@ -408,35 +409,42 @@ void mcp406_init(void)
     vTaskDelay(pdMS_TO_TICKS(500U));
     board_uart_flush_rx(MCP406_UART);
 
-    /* 0. 查询罗盘型号与固件版本（GetModInfo: 00 05 01 EF D4） */
+    /* 0. 查询罗盘型号与固件版本（GetModInfo: 00 05 01 ...） */
     mcp406_send_cmd(MCP406_CMD_GET_MOD_INFO, NULL, 0U);
-    /* 轮询接收响应帧 */
     for (uint8_t wait_i = 0U; wait_i < 10U; wait_i++)
     {
         vTaskDelay(pdMS_TO_TICKS(10U));
         mcp406_poll();
     }
 
-    /* 1. 设置安装方式为 Y 轴朝上 180°（ID 10, 值 12） */
-    uint8_t orient_cfg[2] = {MCP406_CFG_MOUNT_ORIENTATION, (uint8_t)MCP406_ORIENT_Y_UP_180};
-    mcp406_send_cmd(MCP406_CMD_SET_CONFIG, orient_cfg, sizeof(orient_cfg));
-    vTaskDelay(pdMS_TO_TICKS(100U));
+    /* 1. 设置安装方式为 Y 轴朝上 180°（标志位 ID 10, 值 12） */
+    {
+        uint8_t orient_cfg[2] = {MCP406_CFG_MOUNT_ORIENTATION, (uint8_t)MCP406_ORIENT_Y_UP_180};
+        mcp406_send_cmd(MCP406_CMD_SET_CONFIG, orient_cfg, sizeof(orient_cfg));
+        vTaskDelay(pdMS_TO_TICKS(100U));
+    }
 
     /* 2. 设置输出数据组成：方位角(5)、俯仰角(24)、横滚角(25) */
-    uint8_t comp_cfg[4] = {3U, MCP406_DATA_HEADING, MCP406_DATA_PITCH, MCP406_DATA_ROLL};
-    mcp406_send_cmd(MCP406_CMD_SET_DATA_COMPONENTS, comp_cfg, sizeof(comp_cfg));
-    vTaskDelay(pdMS_TO_TICKS(100U));
+    {
+        uint8_t comp_cfg[4] = {3U, MCP406_DATA_HEADING, MCP406_DATA_PITCH, MCP406_DATA_ROLL};
+        mcp406_send_cmd(MCP406_CMD_SET_DATA_COMPONENTS, comp_cfg, sizeof(comp_cfg));
+        vTaskDelay(pdMS_TO_TICKS(100U));
+    }
 
     /* 3. 开启校准过程角度输出（标志位 ID 16, True 0x01）：
      *        校准期间罗盘仍推送姿态角，校准页面实时显示航向/俯仰 */
-    uint8_t angle_in_cal[2] = {16U, 1U};
-    mcp406_send_cmd(MCP406_CMD_SET_CONFIG, angle_in_cal, sizeof(angle_in_cal));
-    vTaskDelay(pdMS_TO_TICKS(100U));
+    {
+        uint8_t angle_in_cal[2] = {MCP406_CFG_CAL_ANGLE_OUT, 1U};
+        mcp406_send_cmd(MCP406_CMD_SET_CONFIG, angle_in_cal, sizeof(angle_in_cal));
+        vTaskDelay(pdMS_TO_TICKS(100U));
+    }
 
     /* 4. 开启校准自动采样（标志位 ID 13, True 0x01） */
-    uint8_t auto_sample[2] = {MCP406_CFG_CAL_AUTO_SAMPLE, 1U};
-    mcp406_send_cmd(MCP406_CMD_SET_CONFIG, auto_sample, sizeof(auto_sample));
-    vTaskDelay(pdMS_TO_TICKS(100U));
+    {
+        uint8_t auto_sample[2] = {MCP406_CFG_CAL_AUTO_SAMPLE, 1U};
+        mcp406_send_cmd(MCP406_CMD_SET_CONFIG, auto_sample, sizeof(auto_sample));
+        vTaskDelay(pdMS_TO_TICKS(100U));
+    }
 
     /* 5. 启动连续广播输出（固定 10Hz） */
     mcp406_send_cmd(MCP406_CMD_START_CONTINUOUS, NULL, 0U);
@@ -497,11 +505,12 @@ void mcp406_calib_mag_start(void)
     vTaskDelay(pdMS_TO_TICKS(80U));
     board_uart_flush_rx(MCP406_UART);
 
-    /* 关键步骤 2：发送 TCM-XB 磁场空间手动校准命令：
+    /* 关键步骤 2：发送磁场空间手动校准命令（手册第 10 条）：
      * 格式：00 09 0A [校准方式 Uint32 大端] [CRC16]
-     * 方式 10 (0x0000000A)：磁场空间手动校准（每姿态静止后主机发采样命令）
-     * 数据帧：00 09 0A 00 00 00 0A AF 06 */
-    uint8_t mode[4] = {0x00U, 0x00U, 0x00U, (uint8_t)MCP406_CAL_MODE_MAG_3D};
+     * 方式 10 (0x0000000A)：磁场空间手动校准
+     * 数据帧：00 09 0A 00 00 00 0A AF 06
+     * 注意：手册第 11 条——发送 StartCal 后罗盘立即采集第一组数据并输出采样点编号 */
+    uint8_t mode[4] = {0x00U, 0x00U, 0x00U, (uint8_t)MCP406_CAL_MODE_MAG_SPACE_MANUAL};
     mcp406_send_cmd(MCP406_CMD_START_CAL, mode, sizeof(mode));
 
     LOGI("calib: StopCont sent -> StartCal (mode=10 space manual, total=%lu: 00 09 0A 00 00 00 0A AF 06)\r\n",
@@ -510,7 +519,7 @@ void mcp406_calib_mag_start(void)
 
 void mcp406_take_cal_sample(void)
 {
-    /* 手动校准采样命令（ID 31 / 0x1F） */
+    /* 校准数据采集（手册第 25 条，ID 31 / 0x1F）：00 05 1F 1C 2B */
     mcp406_send_cmd(MCP406_CMD_TAKE_CAL_SAMPLE, NULL, 0U);
     LOGI("calib: TakeUserCalSample sent\r\n");
 }
@@ -537,6 +546,7 @@ float mcp406_get_cal_mag_score(void)
 
 void mcp406_save(void)
 {
+    /* Save（手册第 9 条，ID 9）：保存配置及校准参数到 EEPROM */
     mcp406_send_cmd(MCP406_CMD_SAVE, NULL, 0U);
     vTaskDelay(pdMS_TO_TICKS(100U));
 
@@ -550,7 +560,8 @@ void mcp406_save(void)
 
 void mcp406_stop_cal(void)
 {
-    /* 发送 StopCal 命令（ID 11）：00 05 0B 4E 9E */
+    /* StopCal（手册第 11 条，ID 11）：00 05 0B 4E 9E
+     * 注意：手册规定发送 StopCal 后认为本次校准失败 */
     mcp406_send_cmd(MCP406_CMD_STOP_CAL, NULL, 0U);
     vTaskDelay(pdMS_TO_TICKS(100U));
     mcp406_send_cmd(MCP406_CMD_START_CONTINUOUS, NULL, 0U);
@@ -560,21 +571,10 @@ void mcp406_stop_cal(void)
     LOGI("mcp406: sent StopCal (00 05 0B 4E 9E) and resumed continuous mode\r\n");
 }
 
-void mcp406_abort_cal(void)
-{
-    mcp406_stop_cal();
-}
-
-void mcp406_calib_mag_end(void)
-{
-    /* 兼容接口：保存并结束 */
-    mcp406_save();
-}
-
 void mcp406_calib_accel(void)
 {
-    /* TCM XB 加速度校准（校准方式=100，Uint32 大端 0x00000064） */
-    uint8_t mode[4] = {0x00U, 0x00U, 0x00U, 0x64U};
+    /* 加速度校准（手册第 10 条，方式 100，Uint32 大端 0x00000064） */
+    uint8_t mode[4] = {0x00U, 0x00U, 0x00U, (uint8_t)MCP406_CAL_MODE_ACCEL};
     mcp406_send_cmd(MCP406_CMD_START_CAL, mode, sizeof(mode));
     vTaskDelay(pdMS_TO_TICKS(4000U));
     mcp406_send_cmd(MCP406_CMD_STOP_CAL, NULL, 0U);
@@ -585,7 +585,7 @@ void mcp406_calib_accel(void)
 
 void mcp406_set_angle_ref(void)
 {
-    /* 零偏置零：写方位角/俯仰角/横滚角零偏均为 0.0f (3个 Float32 大端) */
+    /* WriteZero（手册第 28 条，ID 48）：写方位/俯仰/横滚零偏均为 0.0f（3×Float32 大端） */
     uint8_t zeros[12];
     memset(zeros, 0, sizeof(zeros));
     mcp406_send_cmd(MCP406_CMD_WRITE_ZERO, zeros, sizeof(zeros));
@@ -596,11 +596,11 @@ void mcp406_set_angle_ref(void)
 
 void mcp406_factory_reset(void)
 {
-    /* 恢复磁力计出厂参数 */
+    /* 恢复磁力计出厂校准参数（手册第 23 条，ID 29） */
     mcp406_send_cmd(MCP406_CMD_FACTORY_MAG_COEFF, NULL, 0U);
     vTaskDelay(pdMS_TO_TICKS(200U));
 
-    /* 恢复加速度计出厂参数 */
+    /* 恢复加速度计出厂校准参数（手册第 26 条，ID 36） */
     mcp406_send_cmd(MCP406_CMD_FACTORY_ACCEL_COEFF, NULL, 0U);
     vTaskDelay(pdMS_TO_TICKS(200U));
 
@@ -609,13 +609,17 @@ void mcp406_factory_reset(void)
     board_uart_flush_rx(MCP406_UART);
 
     /* 重新配置本项目参数：Y轴朝上180°、输出Heading/Pitch/Roll、10Hz广播并保存 */
-    uint8_t orient_cfg[2] = {MCP406_CFG_MOUNT_ORIENTATION, (uint8_t)MCP406_ORIENT_Y_UP_180};
-    mcp406_send_cmd(MCP406_CMD_SET_CONFIG, orient_cfg, sizeof(orient_cfg));
-    vTaskDelay(pdMS_TO_TICKS(100U));
+    {
+        uint8_t orient_cfg[2] = {MCP406_CFG_MOUNT_ORIENTATION, (uint8_t)MCP406_ORIENT_Y_UP_180};
+        mcp406_send_cmd(MCP406_CMD_SET_CONFIG, orient_cfg, sizeof(orient_cfg));
+        vTaskDelay(pdMS_TO_TICKS(100U));
+    }
 
-    uint8_t comp_cfg[4] = {3U, MCP406_DATA_HEADING, MCP406_DATA_PITCH, MCP406_DATA_ROLL};
-    mcp406_send_cmd(MCP406_CMD_SET_DATA_COMPONENTS, comp_cfg, sizeof(comp_cfg));
-    vTaskDelay(pdMS_TO_TICKS(100U));
+    {
+        uint8_t comp_cfg[4] = {3U, MCP406_DATA_HEADING, MCP406_DATA_PITCH, MCP406_DATA_ROLL};
+        mcp406_send_cmd(MCP406_CMD_SET_DATA_COMPONENTS, comp_cfg, sizeof(comp_cfg));
+        vTaskDelay(pdMS_TO_TICKS(100U));
+    }
 
     mcp406_send_cmd(MCP406_CMD_START_CONTINUOUS, NULL, 0U);
     vTaskDelay(pdMS_TO_TICKS(100U));
