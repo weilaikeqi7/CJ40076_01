@@ -169,6 +169,27 @@ app_key_event_t app_key_scan(void)
         /* ---------- 校准页：单击 + 按住连发 ---------- */
         evt.evt |= calib_key_events(&key_power, APP_KEY_EVT_POWER_SHORT, APP_KEY_EVT_POWER_REPEAT);
         evt.evt |= calib_key_events(&key_mode, APP_KEY_EVT_MODE_SINGLE, APP_KEY_EVT_MODE_REPEAT);
+
+        /* 校准页同样累计模式键多击（用于磁场校准中六击退出）：
+         * 模式键产生一次单击（MODE_SINGLE）时累计一次计数，600ms 窗口到期后上报 MODE_CLICKS。
+         * 校准状态机内对模式单击无其他消费，可安全并行。 */
+        if ((evt.evt & APP_KEY_EVT_MODE_SINGLE) != 0U && click_count < 10U)
+        {
+            click_count++;
+            click_expire_ms = 0U;
+        }
+
+        if (click_count > 0U && !key_mode.stable)
+        {
+            click_expire_ms += SCAN_MS;
+            if (click_expire_ms >= APP_KEY_MULTICLICK_MS)
+            {
+                evt.evt        |= APP_KEY_EVT_MODE_CLICKS;
+                evt.arg         = click_count;
+                click_count     = 0U;
+                click_expire_ms = 0U;
+            }
+        }
         return evt;
     }
 
