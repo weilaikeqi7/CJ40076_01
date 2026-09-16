@@ -419,7 +419,7 @@ void mcp406_init(void)
 
     /* 1. 设置安装方式为 Y 轴朝上 180°（标志位 ID 10, 值 12） */
     {
-        uint8_t orient_cfg[2] = {MCP406_CFG_MOUNT_ORIENTATION, (uint8_t)MCP406_ORIENT_Y_UP_180};
+        uint8_t orient_cfg[2] = {MCP406_CFG_MOUNT_ORIENTATION, (uint8_t)MCP406_ORIENT_Y_DN_180};
         mcp406_send_cmd(MCP406_CMD_SET_CONFIG, orient_cfg, sizeof(orient_cfg));
         vTaskDelay(pdMS_TO_TICKS(100U));
     }
@@ -610,7 +610,7 @@ void mcp406_factory_reset(void)
 
     /* 重新配置本项目参数：Y轴朝上180°、输出Heading/Pitch/Roll、10Hz广播并保存 */
     {
-        uint8_t orient_cfg[2] = {MCP406_CFG_MOUNT_ORIENTATION, (uint8_t)MCP406_ORIENT_Y_UP_180};
+        uint8_t orient_cfg[2] = {MCP406_CFG_MOUNT_ORIENTATION, (uint8_t)MCP406_ORIENT_Y_DN_180};
         mcp406_send_cmd(MCP406_CMD_SET_CONFIG, orient_cfg, sizeof(orient_cfg));
         vTaskDelay(pdMS_TO_TICKS(100U));
     }
